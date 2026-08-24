@@ -59,11 +59,12 @@ function titleDocument() {
 }
 
 test("fresh same-account 50 cache is used without a network request", async () => {
+  const location = { search: "?account_id=123&matches=50&request=req_01" };
   const documentRef = titleDocument();
   const storage = new MemoryStorage();
   let fetches = 0;
   const result = await runBridge({
-    location: { search: "?account_id=123&matches=50&request=req_01" },
+    location,
     documentRef,
     storage,
     now: () => 10_000,
@@ -90,6 +91,7 @@ test("fresh same-account 50 cache is used without a network request", async () =
   assert.equal(fetches, 0);
   assert.equal(parseBridgeTitle(documentRef.writes[0]).ok, true);
   assert.equal(documentRef.title, result.title);
+  assert.equal(location.hash, encodeURIComponent(result.title));
 });
 
 test("stale cache is not used and network result is cached", async () => {
@@ -122,9 +124,10 @@ test("stale cache is not used and network result is cached", async () => {
 });
 
 test("API failures emit an allowlisted error without raw detail", async () => {
+  const location = { search: "?account_id=123&matches=50&request=req_03" };
   const documentRef = titleDocument();
   const result = await runBridge({
-    location: { search: "?account_id=123&matches=50&request=req_03" },
+    location,
     documentRef,
     apiFetch: async () => {
       throw new ApiError("request failed", {
@@ -149,13 +152,16 @@ test("API failures emit an allowlisted error without raw detail", async () => {
   });
   assert.equal(result.title.includes("secret response body"), false);
   assert.equal(documentRef.title, result.title);
+  assert.equal(location.hash, encodeURIComponent(result.title));
 });
 
 test("publishTitle persists the encoded title", () => {
   const documentRef = titleDocument();
+  const locationRef = {};
   const title = "DLSTATS1:{\"v\":1}";
-  const didAssign = publishTitle(title, { documentRef });
+  const didAssign = publishTitle(title, { documentRef, locationRef });
 
   assert.equal(didAssign, true);
   assert.equal(documentRef.title, title);
+  assert.equal(locationRef.hash, encodeURIComponent(title));
 });

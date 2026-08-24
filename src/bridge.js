@@ -144,11 +144,15 @@ function buildErrorForQuery(query, code, options = {}) {
 
 function publishTitle(title, {
   documentRef = defaultDocument(),
+  locationRef = defaultLocation(),
 } = {}) {
   if (!documentRef || typeof title !== "string" || title.length > TITLE_MAX_LENGTH) return false;
 
   try {
     documentRef.title = title;
+    if (locationRef) {
+      locationRef.hash = encodeURIComponent(title);
+    }
     return true;
   } catch {
     return false;
@@ -184,7 +188,7 @@ export async function runBridge({
   writeCache = writeCachedResult,
 } = {}) {
   const query = parseBridgeQuery(location?.search ?? "");
-  const titleOptions = { documentRef };
+  const titleOptions = { documentRef, locationRef: location };
   if (!query.ok) {
     return emitError(query, "invalid_query", {}, titleOptions);
   }
