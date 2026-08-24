@@ -7,7 +7,6 @@ import {
 import { analyzePlayer } from "./metrics.js";
 import {
   BRIDGE_MATCHES,
-  BRIDGE_TITLE,
   buildErrorTitle,
   buildSuccessTitle,
   parseBridgeQuery,
@@ -145,38 +144,15 @@ function buildErrorForQuery(query, code, options = {}) {
 
 function publishTitle(title, {
   documentRef = defaultDocument(),
-  setTimeoutImpl = typeof globalThis.setTimeout === "function"
-    ? globalThis.setTimeout.bind(globalThis)
-    : null,
 } = {}) {
   if (!documentRef || typeof title !== "string" || title.length > TITLE_MAX_LENGTH) return false;
 
-  let assigned = false;
   try {
     documentRef.title = title;
-    assigned = true;
+    return true;
   } catch {
-    assigned = false;
+    return false;
   }
-
-  const restore = () => {
-    try {
-      documentRef.title = BRIDGE_TITLE;
-    } catch {
-      // A destroyed document can reject the restore; there is no safe retry target.
-    }
-  };
-
-  if (typeof setTimeoutImpl === "function") {
-    try {
-      setTimeoutImpl(restore, 0);
-    } catch {
-      restore();
-    }
-  } else {
-    restore();
-  }
-  return assigned;
 }
 
 function emitError(query, code, options, deps) {
@@ -206,15 +182,11 @@ export async function runBridge({
   analyze = analyzePlayer,
   readCache = readCachedResult,
   writeCache = writeCachedResult,
-  setTimeoutImpl,
 } = {}) {
   const query = parseBridgeQuery(location?.search ?? "");
-  const titleDeps = {
-    documentRef,
-    ...(setTimeoutImpl === undefined ? {} : { setTimeoutImpl }),
-  };
+  const titleOptions = { documentRef };
   if (!query.ok) {
-    return emitError(query, "invalid_query", {}, titleDeps);
+    return emitError(query, "invalid_query", {}, titleOptions);
   }
 
   const currentTime = typeof now === "function" ? now() : now;
@@ -231,7 +203,7 @@ export async function runBridge({
           generated: cachedGenerated(fresh, now),
           analysis,
         });
-        publishTitle(title, titleDeps);
+        publishTitle(title, titleOptions);
         return { ok: true, source: "cache", title };
       } catch {
         // A malformed fresh entry is not a bridge result; fetch a clean value.
@@ -248,7 +220,7 @@ export async function runBridge({
     });
   } catch (error) {
     const failure = genericError(error);
-    return emitError(query, failure.code, failure, titleDeps);
+    return emitError(query, failure.code, failure, titleOptions);
   }
 
   let analysis;
@@ -259,13 +231,13 @@ export async function runBridge({
       community: response?.community,
     });
   } catch {
-    return emitError(query, "invalid_payload", {}, titleDeps);
+    return emitError(query, "invalid_payload", {}, titleOptions);
   }
   if (!analysis || !Number.isSafeInteger(analysis.sampleSize)) {
-    return emitError(query, "invalid_payload", {}, titleDeps);
+    return emitError(query, "invalid_payload", {}, titleOptions);
   }
   if (isEmptyAnalysis(analysis)) {
-    return emitError(query, "empty_sample", {}, titleDeps);
+    return emitError(query, "empty_sample", {}, titleOptions);
   }
 
   const value = {
@@ -286,7 +258,7 @@ export async function runBridge({
     });
   } catch (error) {
     const code = error?.name === "RangeError" ? "payload_too_large" : "invalid_payload";
-    return emitError(query, code, {}, titleDeps);
+    return emitError(query, code, {}, titleOptions);
   }
 
   try {
@@ -295,7 +267,7 @@ export async function runBridge({
     // Cache persistence is opportunistic; a successful request still emits.
   }
 
-  publishTitle(title, titleDeps);
+  publishTitle(title, titleOptions);
   return { ok: true, source: "network", title };
 }
 

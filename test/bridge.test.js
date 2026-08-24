@@ -83,14 +83,13 @@ test("fresh same-account 50 cache is used without a network request", async () =
       fetches += 1;
       return response();
     },
-    setTimeoutImpl: (callback) => callback(),
   });
 
   assert.equal(result.ok, true);
   assert.equal(result.source, "cache");
   assert.equal(fetches, 0);
   assert.equal(parseBridgeTitle(documentRef.writes[0]).ok, true);
-  assert.equal(documentRef.title, "Deadlock Stats Bridge");
+  assert.equal(documentRef.title, result.title);
 });
 
 test("stale cache is not used and network result is cached", async () => {
@@ -115,7 +114,6 @@ test("stale cache is not used and network result is cached", async () => {
       assert.deepEqual({ account, limit }, { account: 123, limit: 50 });
       assert.equal(value.analysis.sampleSize, 3);
     },
-    setTimeoutImpl: (callback) => callback(),
   });
   assert.equal(result.ok, true);
   assert.equal(result.source, "network");
@@ -135,7 +133,6 @@ test("API failures emit an allowlisted error without raw detail", async () => {
         detail: "secret response body",
       });
     },
-    setTimeoutImpl: (callback) => callback(),
   });
   const parsed = parseBridgeTitle(result.title);
   assert.equal(parsed.ok, true);
@@ -151,18 +148,14 @@ test("API failures emit an allowlisted error without raw detail", async () => {
     message: "The stats service is rate limited.",
   });
   assert.equal(result.title.includes("secret response body"), false);
+  assert.equal(documentRef.title, result.title);
 });
 
-test("publishTitle pulses payload then restores the normal title", () => {
+test("publishTitle persists the encoded title", () => {
   const documentRef = titleDocument();
-  const queued = [];
-  const didAssign = publishTitle("DLSTATS1:{\"v\":1}", {
-    documentRef,
-    setTimeoutImpl: (callback) => queued.push(callback),
-  });
+  const title = "DLSTATS1:{\"v\":1}";
+  const didAssign = publishTitle(title, { documentRef });
+
   assert.equal(didAssign, true);
-  assert.equal(documentRef.title, "DLSTATS1:{\"v\":1}");
-  assert.equal(queued.length, 1);
-  queued[0]();
-  assert.equal(documentRef.title, "Deadlock Stats Bridge");
+  assert.equal(documentRef.title, title);
 });
