@@ -423,6 +423,12 @@ h3 {
   overflow-x: auto;
   border-top: 1px solid var(--line-strong);
 }
+.table-scroll-note {
+  display: none;
+  margin: -0.4rem 0 0.9rem;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
 
 .metrics-table {
   width: 100%;
@@ -616,21 +622,8 @@ h3 {
     grid-template-columns: 1fr;
     padding: 1.1rem;
   }
-  .metrics-table {
-    min-width: 0;
-    table-layout: fixed;
-  }
-
-  .metrics-table th,
-  .metrics-table td {
-    padding-inline: 0.5rem;
-    overflow-wrap: break-word;
-  }
-
-  .metrics-table td:first-child,
-  .metrics-table td:last-child,
-  .metrics-table th:last-child {
-    width: auto;
+  .table-scroll-note {
+    display: block;
   }
 
 
