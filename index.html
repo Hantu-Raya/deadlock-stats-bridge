@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="Inspect Deadlock player match data and calculated performance metrics.">
+    <title>Deadlock API Explorer</title>
+    <link rel="stylesheet" href="./styles.css">
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="page-width site-header-inner">
+        <a class="wordmark" href="./" aria-label="Deadlock API Explorer home">Deadlock API Explorer</a>
+        <p class="header-note">Public match data, calculated in your browser.</p>
+      </div>
+    </header>
+
+    <main class="page-width">
+      <section class="intro" aria-labelledby="page-title">
+        <p class="eyebrow">Player lookup</p>
+        <h1 id="page-title">Read a Deadlock account clearly.</h1>
+        <p class="intro-copy">Enter an account ID to inspect recent match data, request details, and metrics calculated from the returned responses.</p>
+      </section>
+
+      <section class="lookup-section" aria-labelledby="lookup-title">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Request</p>
+            <h2 id="lookup-title">Choose the account and sample size</h2>
+          </div>
+          <p class="section-note">A lookup runs once. Refresh is always explicit.</p>
+        </div>
+
+        <form id="explorer-form" class="lookup-form" novalidate>
+          <div class="field-group field-account">
+            <label for="account-id">Deadlock account ID</label>
+            <input id="account-id" name="account_id" type="number" inputmode="numeric" min="1" step="1" autocomplete="off" required aria-describedby="account-id-hint">
+            <p id="account-id-hint" class="field-hint">Use a positive numeric account ID.</p>
+          </div>
+
+          <div class="field-group field-limit">
+            <label for="sample-limit">Recent matches</label>
+            <select id="sample-limit" name="matches" aria-describedby="sample-limit-hint">
+              <option value="25">25 matches</option>
+              <option value="50" selected>50 matches</option>
+              <option value="100">100 matches</option>
+              <option value="200">200 matches</option>
+            </select>
+            <p id="sample-limit-hint" class="field-hint">Used for the player metadata request.</p>
+          </div>
+
+          <div class="form-actions">
+            <button id="lookup" class="button button-primary" type="submit">Look up</button>
+            <button id="refresh" class="button button-secondary" type="button" disabled>Refresh</button>
+          </div>
+        </form>
+        <p id="control-message" class="control-message" role="status" aria-live="polite"></p>
+      </section>
+
+      <section id="explorer-output" class="output-section" aria-labelledby="output-title" aria-busy="false">
+        <h2 id="output-title" class="visually-hidden">Explorer output</h2>
+
+        <section id="empty-state" class="state-panel state-empty" aria-labelledby="empty-title">
+          <p class="state-kicker">No account selected</p>
+          <h3 id="empty-title">Start with an account ID.</h3>
+          <p>Enter a numeric ID above, then choose how many recent matches to include.</p>
+        </section>
+
+        <section id="loading-state" class="state-panel state-loading" role="status" aria-labelledby="loading-title" hidden>
+          <p class="state-kicker">Request in progress</p>
+          <h3 id="loading-title">Loading player data</h3>
+          <p>Waiting for the metadata and community responses.</p>
+          <div class="loading-rule" aria-hidden="true"></div>
+        </section>
+
+        <section id="error-state" class="state-panel state-error" role="alert" aria-labelledby="error-title" hidden>
+          <p class="state-kicker">Request status</p>
+          <h3 id="error-title">The request could not be completed.</h3>
+          <p id="error-message">Try again after checking the account ID.</p>
+          <p id="error-meta" class="state-meta"></p>
+        </section>
+
+        <div id="results-state" hidden>
+          <section class="results-heading" aria-labelledby="results-title">
+            <div>
+              <p class="eyebrow">Player data</p>
+              <h3 id="results-title">Calculated metrics</h3>
+            </div>
+            <div id="freshness-status" class="freshness-status" role="status" aria-live="polite"></div>
+          </section>
+
+          <section class="request-summary" aria-labelledby="request-summary-title">
+            <div class="section-heading compact-heading">
+              <div>
+                <p class="eyebrow">Trace</p>
+                <h3 id="request-summary-title">Request summary</h3>
+              </div>
+            </div>
+            <dl id="request-facts" class="request-facts"></dl>
+          </section>
+
+          <section class="metrics-section" aria-labelledby="metrics-title">
+            <div class="section-heading compact-heading">
+              <div>
+                <p class="eyebrow">Analysis</p>
+                <h3 id="metrics-title">Performance metrics</h3>
+              </div>
+              <p id="analysis-summary" class="section-note"></p>
+            </div>
+            <div class="table-wrap">
+              <table class="metrics-table" id="metrics-table">
+                <caption class="visually-hidden">Calculated player performance metrics</caption>
+                <thead>
+                  <tr>
+                    <th scope="col">Metric</th>
+                    <th scope="col">Result</th>
+                    <th scope="col">Unit</th>
+                    <th scope="col">Community percentile</th>
+                  </tr>
+                </thead>
+                <tbody id="metrics-body"></tbody>
+              </table>
+            </div>
+          </section>
+
+          <section class="supplemental-section" aria-labelledby="supplemental-title">
+            <div class="section-heading compact-heading">
+              <div>
+                <p class="eyebrow">Additional values</p>
+                <h3 id="supplemental-title">MVP and participation</h3>
+              </div>
+            </div>
+            <div class="table-wrap">
+              <table class="metrics-table supplemental-table">
+                <caption class="visually-hidden">Additional player values</caption>
+                <thead>
+                  <tr>
+                    <th scope="col">Value</th>
+                    <th scope="col">Result</th>
+                    <th scope="col">Unit</th>
+                  </tr>
+                </thead>
+                <tbody id="supplemental-body"></tbody>
+              </table>
+            </div>
+          </section>
+
+          <section class="responses-section" aria-labelledby="responses-title">
+            <div class="section-heading compact-heading">
+              <div>
+                <p class="eyebrow">Source responses</p>
+                <h3 id="responses-title">Metadata and community data</h3>
+              </div>
+              <p class="section-note">Raw response bodies remain collapsed until opened.</p>
+            </div>
+            <div id="responses-list" class="responses-list"></div>
+          </section>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="page-width">
+        <p>Deadlock API Explorer uses the public API directly. No account data is stored on a server.</p>
+      </div>
+    </footer>
+
+    <script type="module" src="./src/app.js"></script>
+  </body>
+</html>
