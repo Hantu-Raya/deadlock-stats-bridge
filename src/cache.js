@@ -1,4 +1,4 @@
-const CACHE_PREFIX = "deadlock-stats-cache:v1:";
+const CACHE_PREFIX = "deadlock-stats-cache:v2:";
 
 export const FRESH_TTL_MS = 10 * 60 * 1000;
 export const STALE_TTL_MS = 24 * 60 * 60 * 1000;

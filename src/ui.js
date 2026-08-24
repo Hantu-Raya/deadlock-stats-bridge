@@ -186,12 +186,14 @@ function metricResult(metric) {
   };
 }
 
-function metricPercentile(metric) {
-  if (!metric || typeof metric.percentile !== "number" || !Number.isFinite(metric.percentile)) {
-    return { text: "Unavailable", unavailable: true };
-  }
-  const source = valueIsPresent(metric.percentileSource) ? ` (${metric.percentileSource})` : "";
-  return { text: `${displayValue(metric.percentile)}${source}`, unavailable: false };
+function metricCommunityResult(metric) {
+  const value = metric && valueIsPresent(metric.communityDisplayValue)
+    ? metric.communityDisplayValue
+    : metric?.communityValue;
+  return {
+    text: displayValue(value),
+    unavailable: !valueIsPresent(value),
+  };
 }
 
 function renderMetrics(analysis) {
@@ -215,11 +217,13 @@ function renderMetrics(analysis) {
   metrics.forEach((metric) => {
     const row = doc.createElement("tr");
     const label = valueIsPresent(metric?.label) ? metric.label : metric?.id;
+    const player = metricResult(metric);
+    const community = metricCommunityResult(metric);
     row.append(
       createCell(valueIsPresent(label) ? label : "Unnamed metric"),
-      createCell(metricResult(metric).text, metricResult(metric).unavailable),
+      createCell(player.text, player.unavailable),
+      createCell(community.text, community.unavailable),
       createCell(valueIsPresent(metric?.unit) ? metric.unit : "Unavailable", !valueIsPresent(metric?.unit)),
-      createCell(metricPercentile(metric).text, metricPercentile(metric).unavailable),
     );
     body.append(row);
   });

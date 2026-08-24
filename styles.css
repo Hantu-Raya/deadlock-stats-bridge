@@ -1,15 +1,14 @@
 :root {
-  color-scheme: light;
-  --paper: #f4f0e8;
-  --surface: #fbf9f4;
-  --ink: #27231f;
-  --muted: #6b6258;
-  --line: #cfc6ba;
-  --line-strong: #9e9488;
-  --accent: #8a3f2b;
-  --accent-soft: #eadbd2;
-  --focus: #8a3f2b;
-  --code: #eee9e1;
+  color-scheme: dark;
+  --paper: #101214;
+  --surface: #181b1f;
+  --ink: #f3f0e8;
+  --muted: #adb0ae;
+  --line: #343a40;
+  --line-strong: #626a72;
+  --accent: #d18a56;
+  --focus: #f0b77d;
+  --code: #0c0f12;
   --radius: 2px;
   --page-width: 72rem;
 }
@@ -223,7 +222,7 @@ h3 {
   min-height: 3rem;
   padding: 0.65rem 0.75rem;
   border: 1px solid var(--line-strong);
-  background: #fffdf9;
+  background: var(--code);
   color: var(--ink);
 }
 
@@ -264,13 +263,15 @@ h3 {
 }
 
 .button-primary {
-  background: var(--ink);
-  color: var(--surface);
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--paper);
 }
 
 .button-primary:hover:not(:disabled) {
-  background: var(--accent);
-  border-color: var(--accent);
+  background: var(--focus);
+  border-color: var(--focus);
+  color: var(--paper);
 }
 
 .button-secondary {
@@ -417,12 +418,13 @@ h3 {
   font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
   font-size: 0.82em;
 }
-
 .table-wrap {
   width: 100%;
   overflow-x: auto;
   border-top: 1px solid var(--line-strong);
+  scrollbar-color: var(--accent) var(--code);
 }
+
 .table-scroll-note {
   display: none;
   margin: -0.4rem 0 0.9rem;

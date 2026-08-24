@@ -1,5 +1,3 @@
-const DISTRIBUTION_PERCENTILES = [1, 5, 10, 25, 50, 75, 90, 95, 99];
-const DISTRIBUTION_SOURCE = "community distribution";
 
 const METRIC_DEFINITIONS = [
   {
@@ -283,37 +281,9 @@ function communityEntry(community, field) {
   return entry && typeof entry === "object" ? entry : null;
 }
 
-function threshold(entry, percentile) {
-  if (!entry || typeof entry !== "object") return null;
-  const candidates = [
-    entry[`percentile${percentile}`],
-    entry.percentiles?.[percentile],
-    entry.percentiles?.[`p${percentile}`],
-    entry[`p${percentile}`],
-  ];
-  for (const candidate of candidates) {
-    const number = finiteNumber(candidate);
-    if (number !== null) return number;
-  }
-  return null;
-}
-
-function distributionPercentile(value, community, field) {
-  if (value === null) return { percentile: null, source: null };
+function communityAverage(community, field) {
   const entry = communityEntry(community, field);
-  if (!entry) return { percentile: null, source: null };
-
-  let foundThreshold = false;
-  let bucket = 0;
-  for (const percentile of DISTRIBUTION_PERCENTILES) {
-    const valueAtPercentile = threshold(entry, percentile);
-    if (valueAtPercentile === null) continue;
-    foundThreshold = true;
-    if (value >= valueAtPercentile) bucket = percentile;
-  }
-  return foundThreshold
-    ? { percentile: Math.max(0, Math.min(99, bucket)), source: DISTRIBUTION_SOURCE }
-    : { percentile: null, source: null };
+  return finiteNumber(entry?.avg);
 }
 
 function supplementalValue(value, unit, format) {
@@ -333,15 +303,15 @@ export function analyzePlayer({ accountId, metadata, community } = {}) {
 
   const metrics = METRIC_DEFINITIONS.map((definition) => {
     const value = mean(rows.map(definition.calculate));
-    const distribution = distributionPercentile(value, community, definition.communityField);
+    const communityValue = communityAverage(community, definition.communityField);
     return {
       id: definition.id,
       label: definition.label,
       value,
       displayValue: definition.format(value),
+      communityValue,
+      communityDisplayValue: definition.format(communityValue),
       unit: definition.unit,
-      percentile: distribution.percentile,
-      percentileSource: distribution.source,
     };
   });
 
