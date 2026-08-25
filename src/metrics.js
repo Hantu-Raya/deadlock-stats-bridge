@@ -1,4 +1,7 @@
 
+export const MAX_METADATA_MATCHES = 200;
+export const MAX_PLAYERS_PER_MATCH = 32;
+
 const METRIC_DEFINITIONS = [
   {
     id: "kd",
@@ -220,8 +223,15 @@ function readMatchDuration(match) {
 
 function readMatchRows(metadata, accountId) {
   const rows = [];
-  for (const match of asArray(metadata)) {
+  const matches = asArray(metadata);
+  if (matches.length > MAX_METADATA_MATCHES) {
+    throw new RangeError("metadata match count exceeds limit");
+  }
+  for (const match of matches) {
     const players = Array.isArray(match?.players) ? match.players : [];
+    if (players.length > MAX_PLAYERS_PER_MATCH) {
+      throw new RangeError("metadata player count exceeds limit");
+    }
     const player = players.find((candidate) => sameAccount(playerAccountId(candidate), accountId));
     if (!player) continue;
 

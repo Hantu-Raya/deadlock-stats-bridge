@@ -1,8 +1,9 @@
 import { ApiError, fetchDeadlockData } from "./api.js";
 import {
   FRESH_TTL_MS,
-  readCachedResult,
-  writeCachedResult,
+  clearExpiredBridgeResults,
+  readBridgeCachedResult,
+  writeBridgeCachedResult,
 } from "./cache.js";
 import { analyzePlayer } from "./metrics.js";
 import {
@@ -62,7 +63,7 @@ function readFreshCache(
   matches,
   mode,
   now,
-  readCache = readCachedResult,
+  readCache = readBridgeCachedResult,
 ) {
   if (!storage || typeof readCache !== "function") return null;
   let cached;
@@ -81,29 +82,16 @@ function readFreshCache(
     : null;
 }
 
-function cachedAnalysis(cached, account, analyze) {
+function cachedAnalysis(cached) {
   const value = cached?.value;
   if (!value || typeof value !== "object") return null;
-  if (value.analysis && typeof value.analysis === "object") return value.analysis;
-  const responses = value.responses && typeof value.responses === "object"
-    ? value.responses
-    : value;
-  if (!responses.metadata || !responses.community || typeof analyze !== "function") return null;
-  try {
-    return analyze({
-      accountId: account,
-      metadata: responses.metadata,
-      community: responses.community,
-    });
-  } catch {
-    return null;
-  }
+  return value.analysis && typeof value.analysis === "object"
+    ? value.analysis
+    : null;
 }
 
 function cachedGenerated(cached, now) {
-  const value = cached?.value;
-  const responses = value?.responses;
-  const generated = value?.fetchedAt ?? responses?.fetchedAt;
+  const generated = cached?.value?.fetchedAt;
   return typeof generated === "string" && generated.length > 0
     ? generated
     : safeIsoNow(now);
@@ -124,6 +112,9 @@ function isEmptyAnalysis(analysis) {
 }
 
 function genericError(error) {
+  if (error instanceof ApiError && error.code === "payload_too_large") {
+    return { code: "payload_too_large", status: null, retryAfter: null };
+  }
   if (error instanceof ApiError) {
     const status = Number.isInteger(error.status) && error.status > 0 ? error.status : null;
     const retryAfter = error.retryAfter ?? null;
@@ -136,6 +127,10 @@ function genericError(error) {
     return { code: "upstream_error", status, retryAfter };
   }
   return { code: "network_error", status: null, retryAfter: null };
+}
+
+function isAbortError(error, signal) {
+  return signal?.aborted === true || error?.name === "AbortError";
 }
 
 function buildErrorForQuery(query, code, options = {}) {
@@ -191,19 +186,29 @@ export async function runBridge({
   documentRef = defaultDocument(),
   storage = defaultStorage(),
   now = defaultNow,
+  signal,
   fetchImpl,
   apiFetch = fetchDeadlockData,
   analyze = analyzePlayer,
-  readCache = readCachedResult,
-  writeCache = writeCachedResult,
+  readCache = readBridgeCachedResult,
+  writeCache = writeBridgeCachedResult,
+  clearCache = clearExpiredBridgeResults,
 } = {}) {
   const query = parseBridgeQuery(location?.search ?? "");
   const titleOptions = { documentRef, locationRef: location };
+  if (signal?.aborted) {
+    return { ok: false, aborted: true };
+  }
   if (!query.ok) {
     return emitError(query, "invalid_query", {}, titleOptions);
   }
 
   const currentTime = typeof now === "function" ? now() : now;
+  try {
+    clearCache?.(storage, currentTime);
+  } catch {
+    // Cache cleanup is optional and must not block a live request.
+  }
   const fresh = readFreshCache(
     storage,
     query.account,
@@ -212,8 +217,11 @@ export async function runBridge({
     currentTime,
     readCache,
   );
+  if (signal?.aborted) {
+    return { ok: false, aborted: true };
+  }
   if (fresh) {
-    const analysis = cachedAnalysis(fresh, query.account, analyze);
+    const analysis = cachedAnalysis(fresh);
     if (analysis && !isEmptyAnalysis(analysis)) {
       try {
         const title = buildSuccessTitle({
@@ -241,10 +249,17 @@ export async function runBridge({
       metricsLimit: query.matches,
       mode: query.mode,
       fetchImpl,
+      signal,
     });
   } catch (error) {
+    if (isAbortError(error, signal)) {
+      return { ok: false, aborted: true };
+    }
     const failure = genericError(error);
     return emitError(query, failure.code, failure, titleOptions);
+  }
+  if (signal?.aborted) {
+    return { ok: false, aborted: true };
   }
 
   let analysis;
@@ -254,8 +269,16 @@ export async function runBridge({
       metadata: response?.metadata,
       community: response?.community,
     });
-  } catch {
-    return emitError(query, "invalid_payload", {}, titleOptions);
+  } catch (error) {
+    return emitError(
+      query,
+      error instanceof RangeError ? "payload_too_large" : "invalid_payload",
+      {},
+      titleOptions,
+    );
+  }
+  if (signal?.aborted) {
+    return { ok: false, aborted: true };
   }
   if (!analysis || !Number.isSafeInteger(analysis.sampleSize)) {
     return emitError(query, "invalid_payload", {}, titleOptions);
@@ -265,7 +288,6 @@ export async function runBridge({
   }
 
   const value = {
-    responses: response,
     analysis,
     fetchedAt: responseGenerated(response, now),
   };
@@ -285,8 +307,11 @@ export async function runBridge({
     const code = error?.name === "RangeError" ? "payload_too_large" : "invalid_payload";
     return emitError(query, code, {}, titleOptions);
   }
+  if (signal?.aborted) {
+    return { ok: false, aborted: true };
+  }
   try {
-    writeCache?.(storage, query.account, query.matches, query.mode, value);
+    writeCache?.(storage, query.account, query.matches, query.mode, value, currentTime);
   } catch {
     // Cache persistence is opportunistic; a successful request still emits.
   }
@@ -302,6 +327,32 @@ export {
   readFreshCache,
 };
 
+export function startBridgePage({
+  windowRef = typeof globalThis.window === "undefined" ? null : globalThis.window,
+  run = runBridge,
+  AbortControllerImpl = globalThis.AbortController,
+} = {}) {
+  const controller = typeof AbortControllerImpl === "function"
+    ? new AbortControllerImpl()
+    : null;
+  const onPageHide = () => controller?.abort();
+  try {
+    windowRef?.addEventListener?.("pagehide", onPageHide, { once: true });
+  } catch {
+    // A missing page lifecycle event still leaves normal fetch cancellation.
+  }
+  const promise = Promise.resolve()
+    .then(() => run({ signal: controller?.signal }))
+    .finally(() => {
+      try {
+        windowRef?.removeEventListener?.("pagehide", onPageHide);
+      } catch {
+        // The page can disappear before listener cleanup.
+      }
+    });
+  return { controller, promise };
+}
+
 if (typeof window !== "undefined" && typeof document !== "undefined") {
-  void runBridge();
+  void startBridgePage().promise;
 }

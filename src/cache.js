@@ -1,12 +1,19 @@
 const CACHE_PREFIX = "deadlock-stats-cache:v3:";
 const DEFAULT_CACHE_MODE = "ranked";
 const CACHE_MODES = new Set(["ranked", "standard"]);
+const BRIDGE_CACHE_PREFIX = "deadlock-stats-bridge-cache:v1:";
+const BRIDGE_CACHE_MAX_ENTRIES = 24;
 
 export const FRESH_TTL_MS = 10 * 60 * 1000;
 export const STALE_TTL_MS = 24 * 60 * 60 * 1000;
+export const BRIDGE_CACHE_ENTRY_MAX_CHARS = 32 * 1024;
 
 function cacheKey(accountId, matches, mode) {
   return `${CACHE_PREFIX}${encodeURIComponent(String(accountId))}:${encodeURIComponent(String(matches))}:${encodeURIComponent(mode)}`;
+}
+
+function bridgeCacheKey(accountId, matches, mode) {
+  return `${BRIDGE_CACHE_PREFIX}${encodeURIComponent(String(accountId))}:${encodeURIComponent(String(matches))}:${encodeURIComponent(mode)}`;
 }
 
 function validCacheIdentity(accountId, matches, mode) {
@@ -34,6 +41,50 @@ function parseEntry(raw) {
   } catch {
     return null;
   }
+}
+
+function parseBridgeEntry(raw) {
+  if (
+    typeof raw !== "string" ||
+    raw.length === 0 ||
+    raw.length > BRIDGE_CACHE_ENTRY_MAX_CHARS
+  ) {
+    return null;
+  }
+  try {
+    const entry = JSON.parse(raw);
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return null;
+    if (
+      Object.keys(entry).length !== 2 ||
+      !Object.prototype.hasOwnProperty.call(entry, "savedAt") ||
+      !Object.prototype.hasOwnProperty.call(entry, "value") ||
+      !Number.isFinite(entry.savedAt) ||
+      !entry.value ||
+      typeof entry.value !== "object" ||
+      Array.isArray(entry.value)
+    ) {
+      return null;
+    }
+    return entry;
+  } catch {
+    return null;
+  }
+}
+
+function bridgeKeys(storage) {
+  const keys = [];
+  try {
+    const length = Number.isFinite(storage?.length) ? storage.length : 0;
+    for (let index = 0; index < length; index += 1) {
+      const key = storage.key(index);
+      if (typeof key === "string" && key.startsWith(BRIDGE_CACHE_PREFIX)) {
+        keys.push(key);
+      }
+    }
+  } catch {
+    return [];
+  }
+  return keys;
 }
 
 function resolveReadArgs(modeOrNow, maybeNow) {
@@ -158,4 +209,118 @@ export function clearExpiredResults(storage, now = defaultNow()) {
     }
   }
   return removed;
+}
+
+export function readBridgeCachedResult(
+  storage,
+  accountId,
+  matches,
+  mode,
+  now = defaultNow(),
+) {
+  if (
+    !storage ||
+    typeof storage.getItem !== "function" ||
+    !validCacheIdentity(accountId, matches, mode) ||
+    !Number.isFinite(now)
+  ) {
+    return null;
+  }
+  let entry;
+  try {
+    entry = parseBridgeEntry(storage.getItem(bridgeCacheKey(accountId, matches, mode)));
+  } catch {
+    return null;
+  }
+  if (!entry) return null;
+  const ageMs = now - entry.savedAt;
+  if (ageMs < 0 || ageMs >= FRESH_TTL_MS) return null;
+  return { value: entry.value, ageMs, freshness: "fresh" };
+}
+
+export function clearExpiredBridgeResults(storage, now = defaultNow()) {
+  if (
+    !storage ||
+    typeof storage.getItem !== "function" ||
+    typeof storage.removeItem !== "function" ||
+    !Number.isFinite(now)
+  ) {
+    return 0;
+  }
+  let removed = 0;
+  for (const key of bridgeKeys(storage)) {
+    let entry;
+    try {
+      entry = parseBridgeEntry(storage.getItem(key));
+    } catch {
+      entry = null;
+    }
+    const ageMs = entry ? now - entry.savedAt : FRESH_TTL_MS;
+    if (!entry || ageMs < 0 || ageMs >= FRESH_TTL_MS) {
+      try {
+        storage.removeItem(key);
+        removed += 1;
+      } catch {
+        // Storage can become unavailable between enumeration and removal.
+      }
+    }
+  }
+  return removed;
+}
+
+export function writeBridgeCachedResult(
+  storage,
+  accountId,
+  matches,
+  mode,
+  value,
+  now = defaultNow(),
+) {
+  if (
+    !storage ||
+    typeof storage.setItem !== "function" ||
+    !validCacheIdentity(accountId, matches, mode) ||
+    !Number.isFinite(now) ||
+    !value ||
+    typeof value !== "object" ||
+    Array.isArray(value)
+  ) {
+    return false;
+  }
+  const key = bridgeCacheKey(accountId, matches, mode);
+  let serialized;
+  try {
+    serialized = JSON.stringify({ savedAt: now, value });
+  } catch {
+    return false;
+  }
+  if (serialized.length > BRIDGE_CACHE_ENTRY_MAX_CHARS) return false;
+
+  clearExpiredBridgeResults(storage, now);
+  const existing = bridgeKeys(storage)
+    .filter((candidate) => candidate !== key)
+    .map((candidate) => {
+      let entry;
+      try {
+        entry = parseBridgeEntry(storage.getItem(candidate));
+      } catch {
+        entry = null;
+      }
+      return { key: candidate, savedAt: entry?.savedAt ?? 0 };
+    })
+    .sort((left, right) => left.savedAt - right.savedAt);
+  while (existing.length >= BRIDGE_CACHE_MAX_ENTRIES) {
+    const oldest = existing.shift();
+    try {
+      storage.removeItem(oldest.key);
+    } catch {
+      break;
+    }
+  }
+  try {
+    storage.setItem(key, serialized);
+    return true;
+  } catch {
+    return false;
+  }
 }

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   ApiError,
+  MAX_RESPONSE_BYTES,
   buildMetadataUrl,
   buildMetricsUrl,
   fetchDeadlockData,
@@ -51,6 +52,7 @@ test("API builders reject unsupported modes", () => {
 
 test("fetchDeadlockData returns serializable response envelopes", async () => {
   const calls = [];
+  const controller = new AbortController();
   const fetchImpl = async (url, options) => {
     calls.push({ url, options });
     const isMetadata = url.includes("/v1/matches/metadata");
@@ -58,8 +60,8 @@ test("fetchDeadlockData returns serializable response envelopes", async () => {
       ok: true,
       status: 200,
       headers: { "Content-Type": "application/json", "X-RateLimit-Remaining": "9" },
-      async json() {
-        return isMetadata ? [{ match_id: 1 }] : { kills: { avg: 4 } };
+      async text() {
+        return JSON.stringify(isMetadata ? [{ match_id: 1 }] : { kills: { avg: 4 } });
       },
     };
   };
@@ -69,11 +71,11 @@ test("fetchDeadlockData returns serializable response envelopes", async () => {
     limit: 100,
     mode: "standard",
     metricsLimit: 100,
-    signal: "signal",
+    signal: controller.signal,
     fetchImpl,
   });
   assert.equal(calls.length, 2);
-  assert.equal(calls[0].options.signal, "signal");
+  assert.ok(calls.every((call) => call.options.signal && call.options.signal.aborted === false));
   assert.equal(new URL(calls[0].url).searchParams.get("match_mode"), "unranked");
   assert.equal(new URL(calls[1].url).searchParams.get("match_mode"), "unranked");
   assert.equal(new URL(calls[1].url).searchParams.get("max_matches"), "100");
@@ -94,12 +96,12 @@ test("fetchDeadlockData preserves status, Retry-After, URL, and safe detail", as
         ok: false,
         status: 429,
         headers: { "Retry-After": "17" },
-        async json() {
-          return { message: "slow down", token: "must-not-leak" };
+        async text() {
+          return JSON.stringify({ message: "slow down", token: "must-not-leak" });
         },
       };
     }
-    return { ok: true, status: 200, headers: {}, async json() { return {}; } };
+    return { ok: true, status: 200, headers: {}, async text() { return "{}"; } };
   };
 
   await assert.rejects(
@@ -123,15 +125,12 @@ test("fetchDeadlockData wraps response-body failures as ApiError", async () => {
         ok: false,
         status: 503,
         headers: { "Retry-After": "3" },
-        async json() {
-          throw new Error("body stream closed");
-        },
         async text() {
           throw new Error("body stream closed");
         },
       };
     }
-    return { ok: true, status: 200, headers: {}, async json() { return {}; } };
+    return { ok: true, status: 200, headers: {}, async text() { return "{}"; } };
   };
 
   await assert.rejects(
@@ -145,4 +144,79 @@ test("fetchDeadlockData wraps response-body failures as ApiError", async () => {
       return true;
     },
   );
+});
+
+test("fetchDeadlockData rejects oversized responses before reading the body", async () => {
+  let bodyRead = false;
+  const fetchImpl = async (url) => ({
+    ok: true,
+    status: 200,
+    headers: { "Content-Length": String(MAX_RESPONSE_BYTES + 1) },
+    async text() {
+      bodyRead = true;
+      return url.includes("/metadata") ? "[]" : "{}";
+    },
+  });
+
+  await assert.rejects(
+    fetchDeadlockData({ accountId: 50, limit: 50, fetchImpl }),
+    (error) => error instanceof ApiError && error.code === "payload_too_large",
+  );
+  assert.equal(bodyRead, false);
+});
+
+test("fetchDeadlockData cancels a chunked body that crosses the byte limit", async () => {
+  let cancelled = 0;
+  const fetchImpl = async () => ({
+    ok: true,
+    status: 200,
+    headers: {},
+    body: {
+      getReader() {
+        return {
+          async read() {
+            return { done: false, value: { byteLength: MAX_RESPONSE_BYTES + 1 } };
+          },
+          async cancel() {
+            cancelled += 1;
+          },
+          releaseLock() {},
+        };
+      },
+    },
+  });
+
+  await assert.rejects(
+    fetchDeadlockData({ accountId: 50, limit: 50, fetchImpl }),
+    (error) => error instanceof ApiError && error.code === "payload_too_large",
+  );
+  assert.ok(cancelled >= 1);
+});
+
+test("fetchDeadlockData aborts the sibling request after one endpoint fails", async () => {
+  let siblingAborted = false;
+  const fetchImpl = async (url, { signal }) => {
+    if (url.includes("/v1/matches/metadata")) {
+      return {
+        ok: false,
+        status: 503,
+        headers: {},
+        async text() { return "{\"message\":\"down\"}"; },
+      };
+    }
+    return new Promise((resolve, reject) => {
+      signal.addEventListener("abort", () => {
+        siblingAborted = true;
+        const error = new Error("aborted");
+        error.name = "AbortError";
+        reject(error);
+      }, { once: true });
+    });
+  };
+
+  await assert.rejects(
+    fetchDeadlockData({ accountId: 50, limit: 50, fetchImpl }),
+    (error) => error instanceof ApiError && error.status === 503,
+  );
+  assert.equal(siblingAborted, true);
 });

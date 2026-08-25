@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { analyzePlayer } from "../src/metrics.js";
+import { MAX_METADATA_MATCHES, analyzePlayer } from "../src/metrics.js";
 
 function metric(analysis, id) {
   return analysis.metrics.find((entry) => entry.id === id);
@@ -194,4 +194,16 @@ test("analyzePlayer returns stable unavailable values when the target is missing
   assert.equal(metric(analysis, "average-kills").communityDisplayValue, "4.00");
   assert.equal(analysis.supplemental.averageMvp.value, null);
   assert.equal(analysis.supplemental.killParticipation.value, null);
+});
+
+test("analyzePlayer rejects metadata beyond the selected maximum", () => {
+  const matches = Array.from({ length: MAX_METADATA_MATCHES + 1 }, () => ({
+    duration_s: 600,
+    players: [{ account_id: 7, team: 0, kills: 1 }],
+  }));
+
+  assert.throws(
+    () => analyzePlayer({ accountId: 7, metadata: { data: matches }, community: {} }),
+    RangeError,
+  );
 });

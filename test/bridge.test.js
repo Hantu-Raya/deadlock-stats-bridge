@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { ApiError } from "../src/api.js";
-import { publishTitle, runBridge } from "../src/bridge.js";
+import { publishTitle, runBridge, startBridgePage } from "../src/bridge.js";
 import { parseBridgeTitle } from "../src/title-protocol.js";
 
 class MemoryStorage {
@@ -94,6 +94,123 @@ test("fresh same-account 50 cache is used without a network request", async () =
   assert.equal(parseBridgeTitle(documentRef.writes[0]).ok, true);
   assert.equal(documentRef.title, result.title);
   assert.equal(location.hash, encodeURIComponent(result.title));
+});
+
+test("malformed fresh cache falls through to a clean network result", async () => {
+  const documentRef = titleDocument();
+  let fetches = 0;
+  const result = await runBridge({
+    location: { search: "?account_id=123&matches=50&mode=ranked&request=req_bad_cache" },
+    documentRef,
+    now: () => 10_000,
+    readCache: () => ({
+      freshness: "fresh",
+      ageMs: 1,
+      value: { fetchedAt: "2026-08-25T00:00:00.000Z", analysis: { sampleSize: 1 } },
+    }),
+    apiFetch: async () => {
+      fetches += 1;
+      return response();
+    },
+    analyze: () => analysis(),
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.source, "network");
+  assert.equal(fetches, 1);
+});
+
+test("aborted bridge requests publish no title", async () => {
+  const documentRef = titleDocument();
+  const controller = new AbortController();
+  controller.abort();
+  const result = await runBridge({
+    location: { search: "?account_id=123&matches=50&mode=ranked&request=req_abort" },
+    documentRef,
+    signal: controller.signal,
+    apiFetch: async ({ signal }) => {
+      assert.equal(signal, controller.signal);
+      const error = new Error("aborted");
+      error.name = "AbortError";
+      throw error;
+    },
+  });
+
+  assert.deepEqual(result, { ok: false, aborted: true });
+  assert.deepEqual(documentRef.writes, []);
+});
+
+test("already-aborted cache hits publish no title", async () => {
+  const documentRef = titleDocument();
+  const controller = new AbortController();
+  controller.abort();
+  const result = await runBridge({
+    location: { search: "?account_id=123&matches=50&mode=ranked&request=req_abort_cache" },
+    documentRef,
+    signal: controller.signal,
+    readCache: () => ({
+      freshness: "fresh",
+      ageMs: 1,
+      value: {
+        fetchedAt: "2026-08-25T00:00:00.000Z",
+        analysis: analysis(),
+      },
+    }),
+    apiFetch: async () => {
+      throw new Error("network must stay idle");
+    },
+  });
+
+  assert.deepEqual(result, { ok: false, aborted: true });
+  assert.deepEqual(documentRef.writes, []);
+});
+
+test("abort during analysis prevents cache and title writes", async () => {
+  const documentRef = titleDocument();
+  const controller = new AbortController();
+  let cacheWrites = 0;
+  const result = await runBridge({
+    location: { search: "?account_id=123&matches=50&mode=ranked&request=req_abort_analysis" },
+    documentRef,
+    signal: controller.signal,
+    readCache: () => null,
+    apiFetch: async () => response(),
+    analyze: () => {
+      controller.abort();
+      return analysis();
+    },
+    writeCache: () => {
+      cacheWrites += 1;
+    },
+  });
+
+  assert.deepEqual(result, { ok: false, aborted: true });
+  assert.equal(cacheWrites, 0);
+  assert.deepEqual(documentRef.writes, []);
+});
+
+test("pagehide aborts the bridge request and removes its listener", async () => {
+  const listeners = new Map();
+  const windowRef = {
+    addEventListener(name, callback) {
+      listeners.set(name, callback);
+    },
+    removeEventListener(name, callback) {
+      if (listeners.get(name) === callback) listeners.delete(name);
+    },
+  };
+  const started = startBridgePage({
+    windowRef,
+    run: ({ signal }) => new Promise((resolve) => {
+      signal.addEventListener("abort", () => resolve({ ok: false, aborted: true }), { once: true });
+    }),
+  });
+
+  await Promise.resolve();
+  listeners.get("pagehide")();
+  assert.deepEqual(await started.promise, { ok: false, aborted: true });
+  assert.equal(started.controller.signal.aborted, true);
+  assert.equal(listeners.has("pagehide"), false);
 });
 
 test("stale cache is not used and network result is cached", async () => {

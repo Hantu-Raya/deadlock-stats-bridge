@@ -7,6 +7,10 @@ import {
   clearExpiredResults,
   readCachedResult,
   writeCachedResult,
+  BRIDGE_CACHE_ENTRY_MAX_CHARS,
+  clearExpiredBridgeResults,
+  readBridgeCachedResult,
+  writeBridgeCachedResult,
 } from "../src/cache.js";
 
 class MemoryStorage {
@@ -133,4 +137,33 @@ test("cache identity isolates count and mode", () => {
   });
   assert.equal(readCachedResult(storage, 123, 50, "standard", 10_000_001), null);
   assert.equal(readCachedResult(storage, 123, 100, "ranked", 10_000_001), null);
+});
+
+test("bridge cache accepts only bounded current entries", () => {
+  const storage = new MemoryStorage();
+  const now = 20_000_000;
+  const value = {
+    fetchedAt: "2026-08-25T00:00:00.000Z",
+    analysis: { sampleSize: 3, metrics: [] },
+  };
+
+  assert.equal(writeBridgeCachedResult(storage, 123, 50, "ranked", value, now), true);
+  assert.deepEqual(readBridgeCachedResult(storage, 123, 50, "ranked", now + 1).value, value);
+
+  const key = storage.key(0);
+  storage.setItem(key, "x".repeat(BRIDGE_CACHE_ENTRY_MAX_CHARS + 1));
+  assert.equal(readBridgeCachedResult(storage, 123, 50, "ranked", now + 1), null);
+});
+
+test("bridge cache rejects future timestamps and removes expired entries", () => {
+  const storage = new MemoryStorage();
+  const now = 30_000_000;
+
+  writeBridgeCachedResult(storage, 123, 50, "ranked", { ok: "future" }, now + 60_000);
+  writeBridgeCachedResult(storage, 123, 100, "ranked", { ok: "expired" }, now - FRESH_TTL_MS);
+  writeBridgeCachedResult(storage, 123, 150, "standard", { ok: "fresh" }, now - 1);
+
+  assert.equal(readBridgeCachedResult(storage, 123, 50, "ranked", now), null);
+  assert.equal(clearExpiredBridgeResults(storage, now), 1);
+  assert.deepEqual(readBridgeCachedResult(storage, 123, 150, "standard", now).value, { ok: "fresh" });
 });

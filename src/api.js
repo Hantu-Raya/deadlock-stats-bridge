@@ -3,6 +3,7 @@ const METADATA_PATH = "/v1/matches/metadata";
 const METRICS_PATH = "/v1/analytics/player-stats/metrics";
 
 const EXTRA_PLAYER_COLUMNS = ["mvp_rank"];
+export const MAX_RESPONSE_BYTES = 16 * 1024 * 1024;
 const API_MATCH_MODES = Object.freeze({
   ranked: "ranked",
   standard: "unranked",
@@ -108,36 +109,92 @@ function safeErrorMessage(error) {
   return safeText(String(error)) || "Request failed";
 }
 
-async function readResponseData(response) {
-  if (typeof response.json === "function") {
-    try {
-      return await response.json();
-    } catch {
-      // A text response is still useful for an error detail. Try it below.
-    }
+class PayloadTooLargeError extends Error {
+  constructor() {
+    super("Deadlock API response exceeds the byte limit");
+    this.name = "PayloadTooLargeError";
   }
+}
 
-  if (typeof response.text === "function") {
-    const text = await response.text();
-    const trimmed = text.trim();
-    if (!trimmed) return null;
+function utf8Length(text) {
+  if (typeof TextEncoder === "function") {
+    return new TextEncoder().encode(text).byteLength;
+  }
+  return text.length;
+}
+
+async function readBoundedText(response) {
+  if (
+    response?.body &&
+    typeof response.body.getReader === "function" &&
+    typeof TextDecoder === "function"
+  ) {
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    const parts = [];
+    let received = 0;
     try {
-      return JSON.parse(trimmed);
-    } catch {
-      return trimmed;
+      while (true) {
+        const chunk = await reader.read();
+        if (chunk.done) break;
+        received += chunk.value?.byteLength ?? 0;
+        if (received > MAX_RESPONSE_BYTES) {
+          try {
+            await reader.cancel();
+          } catch {
+            // The size violation is the result even if cancellation races.
+          }
+          throw new PayloadTooLargeError();
+        }
+        parts.push(decoder.decode(chunk.value, { stream: true }));
+      }
+      parts.push(decoder.decode());
+      return parts.join("");
+    } finally {
+      try {
+        reader.releaseLock?.();
+      } catch {
+        // A consumed or cancelled reader may already have released its lock.
+      }
     }
   }
-  return null;
+  if (typeof response?.text !== "function") return "";
+  const text = await response.text();
+  if (utf8Length(text) > MAX_RESPONSE_BYTES) throw new PayloadTooLargeError();
+  return text;
+}
+
+async function readResponseData(response, headers) {
+  const contentLength = Number(headers["content-length"]);
+  if (Number.isFinite(contentLength) && contentLength > MAX_RESPONSE_BYTES) {
+    throw new PayloadTooLargeError();
+  }
+  const text = await readBoundedText(response);
+  const trimmed = text.trim();
+  if (!trimmed) return null;
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    return trimmed;
+  }
 }
 
 export class ApiError extends Error {
-  constructor(message, { status = 0, retryAfter = null, url = "", detail = null, cause } = {}) {
+  constructor(message, {
+    status = 0,
+    retryAfter = null,
+    url = "",
+    detail = null,
+    code = null,
+    cause,
+  } = {}) {
     super(message, cause === undefined ? undefined : { cause });
     this.name = "ApiError";
     this.status = Number.isFinite(status) ? status : 0;
     this.retryAfter = retryAfter ?? null;
     this.url = String(url);
     this.detail = safeDetail(detail);
+    this.code = typeof code === "string" ? code : null;
   }
 
   toJSON() {
@@ -147,6 +204,7 @@ export class ApiError extends Error {
       status: this.status,
       retryAfter: this.retryAfter,
       url: this.url,
+      code: this.code,
       detail: this.detail,
     };
   }
@@ -157,6 +215,7 @@ async function fetchEnvelope(url, fetchImpl, signal) {
   try {
     response = await fetchImpl(url, { signal });
   } catch (error) {
+    if (error?.name === "AbortError") throw error;
     if (error instanceof ApiError) throw error;
     throw new ApiError("Deadlock API request failed", {
       status: 0,
@@ -168,10 +227,29 @@ async function fetchEnvelope(url, fetchImpl, signal) {
 
   const status = Number.isFinite(response?.status) ? response.status : 0;
   const headers = normalizeHeaders(response?.headers);
+  const contentLength = Number(headers["content-length"]);
+  if (Number.isFinite(contentLength) && contentLength > MAX_RESPONSE_BYTES) {
+    throw new ApiError("Deadlock API response exceeds the byte limit", {
+      status,
+      retryAfter: headers["retry-after"] ?? null,
+      url,
+      code: "payload_too_large",
+    });
+  }
   let data;
   try {
-    data = await readResponseData(response);
+    data = await readResponseData(response, headers);
   } catch (error) {
+    if (error?.name === "AbortError") throw error;
+    if (error instanceof PayloadTooLargeError) {
+      throw new ApiError("Deadlock API response exceeds the byte limit", {
+        status,
+        retryAfter: headers["retry-after"] ?? null,
+        url,
+        code: "payload_too_large",
+        cause: error,
+      });
+    }
     throw new ApiError("Deadlock API response body could not be read", {
       status,
       retryAfter: headers["retry-after"] ?? null,
@@ -214,12 +292,32 @@ async function fetchDeadlockData({
   const fetchedAt = new Date().toISOString();
   const metadataUrl = buildMetadataUrl(accountId, requestedLimit, mode);
   const communityUrl = buildMetricsUrl(metricsLimit, mode);
-  const [metadata, community] = await Promise.all([
-    fetchEnvelope(metadataUrl, fetchImpl, signal),
-    fetchEnvelope(communityUrl, fetchImpl, signal),
-  ]);
 
-  return { fetchedAt, metadata, community };
+  const controller = typeof AbortController === "function" ? new AbortController() : null;
+  const requestSignal = controller ? controller.signal : signal;
+  let detachSignal = null;
+  if (controller && signal) {
+    const abort = () => controller.abort(signal.reason);
+    if (signal.aborted) {
+      abort();
+    } else if (typeof signal.addEventListener === "function") {
+      signal.addEventListener("abort", abort, { once: true });
+      detachSignal = () => signal.removeEventListener?.("abort", abort);
+    }
+  }
+  try {
+    const [metadata, community] = await Promise.all([
+      fetchEnvelope(metadataUrl, fetchImpl, requestSignal),
+      fetchEnvelope(communityUrl, fetchImpl, requestSignal),
+    ]);
+    return { fetchedAt, metadata, community };
+  } catch (error) {
+    controller?.abort();
+    throw error;
+  } finally {
+    detachSignal?.();
+  }
+
 }
 
 export { buildMetadataUrl, buildMetricsUrl, fetchDeadlockData };

@@ -58,6 +58,9 @@ const METRIC_GROUPS = Object.freeze([
     ]),
   }),
 ]);
+const METRIC_SOURCES = Object.freeze(
+  METRIC_GROUPS.flatMap((group) => group.metrics.map((metric) => metric.source)),
+);
 
 const GROUP_IDS = Object.freeze(METRIC_GROUPS.map((group) => group.id));
 const ERROR_CODES = Object.freeze([
@@ -180,10 +183,24 @@ function metricValue(metric, key) {
 
 export function selectMetricGroups(analysis) {
   const metrics = Array.isArray(analysis?.metrics) ? analysis.metrics : [];
+  if (metrics.length !== METRIC_SOURCES.length) {
+    throw new TypeError("analysis must contain every comparison metric");
+  }
+  const byId = new Map();
+  for (const metric of metrics) {
+    if (
+      !isPlainObject(metric) ||
+      !METRIC_SOURCES.includes(metric.id) ||
+      byId.has(metric.id)
+    ) {
+      throw new TypeError("analysis metric IDs must be exact and unique");
+    }
+    byId.set(metric.id, metric);
+  }
   return METRIC_GROUPS.map((group) => ({
     id: group.id,
     metrics: group.metrics.map((definition) => {
-      const metric = metrics.find((candidate) => candidate?.id === definition.source);
+      const metric = byId.get(definition.source);
       return {
         id: definition.id,
         player: metricValue(metric, "value"),
