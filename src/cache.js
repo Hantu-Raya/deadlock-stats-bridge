@@ -1,10 +1,22 @@
-const CACHE_PREFIX = "deadlock-stats-cache:v2:";
+const CACHE_PREFIX = "deadlock-stats-cache:v3:";
+const DEFAULT_CACHE_MODE = "ranked";
+const CACHE_MODES = new Set(["ranked", "standard"]);
 
 export const FRESH_TTL_MS = 10 * 60 * 1000;
 export const STALE_TTL_MS = 24 * 60 * 60 * 1000;
 
-function cacheKey(accountId, limit) {
-  return `${CACHE_PREFIX}${encodeURIComponent(String(accountId))}:${encodeURIComponent(String(limit))}`;
+function cacheKey(accountId, matches, mode) {
+  return `${CACHE_PREFIX}${encodeURIComponent(String(accountId))}:${encodeURIComponent(String(matches))}:${encodeURIComponent(mode)}`;
+}
+
+function validCacheIdentity(accountId, matches, mode) {
+  return (
+    Number.isSafeInteger(accountId) &&
+    accountId > 0 &&
+    Number.isSafeInteger(matches) &&
+    matches > 0 &&
+    CACHE_MODES.has(mode)
+  );
 }
 
 function defaultNow() {
@@ -24,12 +36,44 @@ function parseEntry(raw) {
   }
 }
 
-export function readCachedResult(storage, accountId, limit, now = defaultNow()) {
-  if (!storage || typeof storage.getItem !== "function") return null;
+function resolveReadArgs(modeOrNow, maybeNow) {
+  if (typeof modeOrNow === "string") {
+    return {
+      mode: modeOrNow,
+      now: maybeNow === undefined ? defaultNow() : maybeNow,
+    };
+  }
+  return {
+    mode: DEFAULT_CACHE_MODE,
+    now: modeOrNow === undefined ? defaultNow() : modeOrNow,
+  };
+}
+
+function resolveWriteArgs(modeOrValue, maybeValue, hasExplicitMode) {
+  return hasExplicitMode
+    ? { mode: modeOrValue, value: maybeValue }
+    : { mode: DEFAULT_CACHE_MODE, value: modeOrValue };
+}
+
+export function readCachedResult(
+  storage,
+  accountId,
+  matches,
+  modeOrNow,
+  maybeNow,
+) {
+  const { mode, now } = resolveReadArgs(modeOrNow, maybeNow);
+  if (
+    !storage ||
+    typeof storage.getItem !== "function" ||
+    !validCacheIdentity(accountId, matches, mode)
+  ) {
+    return null;
+  }
 
   let entry;
   try {
-    entry = parseEntry(storage.getItem(cacheKey(accountId, limit)));
+    entry = parseEntry(storage.getItem(cacheKey(accountId, matches, mode)));
   } catch {
     return null;
   }
@@ -46,11 +90,28 @@ export function readCachedResult(storage, accountId, limit, now = defaultNow()) 
   };
 }
 
-export function writeCachedResult(storage, accountId, limit, value) {
-  if (!storage || typeof storage.setItem !== "function") return false;
+export function writeCachedResult(
+  storage,
+  accountId,
+  matches,
+  modeOrValue,
+  maybeValue,
+) {
+  const { mode, value } = resolveWriteArgs(
+    modeOrValue,
+    maybeValue,
+    arguments.length >= 5,
+  );
+  if (
+    !storage ||
+    typeof storage.setItem !== "function" ||
+    !validCacheIdentity(accountId, matches, mode)
+  ) {
+    return false;
+  }
   try {
     const serialized = JSON.stringify({ savedAt: Date.now(), value });
-    storage.setItem(cacheKey(accountId, limit), serialized);
+    storage.setItem(cacheKey(accountId, matches, mode), serialized);
     return true;
   } catch {
     return false;

@@ -1,8 +1,11 @@
-const TITLE_PREFIX = "DLSTATS1:";
+const TITLE_PREFIX = "DLSTATS2:";
 const TITLE_MAX_LENGTH = 2048;
 const BRIDGE_TITLE = "Deadlock Stats Bridge";
-const BRIDGE_VERSION = 1;
-const BRIDGE_MATCHES = 50;
+const BRIDGE_VERSION = 2;
+const ALLOWED_MATCHES = Object.freeze([50, 100, 150]);
+const ALLOWED_MODES = Object.freeze(["ranked", "standard"]);
+const DEFAULT_MATCHES = 50;
+const DEFAULT_MODE = "ranked";
 const REQUEST_MAX_LENGTH = 64;
 const MESSAGE_MAX_LENGTH = 160;
 const GENERATED_MAX_LENGTH = 64;
@@ -92,6 +95,16 @@ export function normalizeAccount(value) {
   return Number.isSafeInteger(account) && account > 0 ? account : null;
 }
 
+export function normalizeMatches(value) {
+  const matches =
+    typeof value === "string" && /^\d+$/.test(value) ? Number(value) : value;
+  return ALLOWED_MATCHES.includes(matches) ? matches : null;
+}
+
+export function normalizeMode(value) {
+  return typeof value === "string" && ALLOWED_MODES.includes(value) ? value : null;
+}
+
 export function normalizeRequest(value) {
   return (
     typeof value === "string" &&
@@ -111,7 +124,8 @@ export function parseBridgeQuery(search = "") {
       ok: false,
       code: "invalid_query",
       account: null,
-      matches: BRIDGE_MATCHES,
+      matches: null,
+      mode: null,
       request: null,
       message: "Invalid bridge request.",
     };
@@ -119,16 +133,24 @@ export function parseBridgeQuery(search = "") {
 
   const rawAccount = oneQueryValue(params, "account_id");
   const rawMatches = oneQueryValue(params, "matches");
+  const rawMode = oneQueryValue(params, "mode");
   const rawRequest = oneQueryValue(params, "request");
   const account = normalizeAccount(rawAccount);
+  const normalizedMatches = normalizeMatches(rawMatches);
+  const matches =
+    normalizedMatches !== null && rawMatches === String(normalizedMatches)
+      ? normalizedMatches
+      : null;
+  const mode = normalizeMode(rawMode);
   const request = normalizeRequest(rawRequest);
 
-  if (account === null || rawMatches !== String(BRIDGE_MATCHES) || request === null) {
+  if (account === null || matches === null || mode === null || request === null) {
     return {
       ok: false,
       code: "invalid_query",
       account,
-      matches: BRIDGE_MATCHES,
+      matches,
+      mode,
       request,
       message: "Invalid bridge request.",
     };
@@ -137,7 +159,8 @@ export function parseBridgeQuery(search = "") {
   return {
     ok: true,
     account,
-    matches: BRIDGE_MATCHES,
+    matches,
+    mode,
     request,
   };
 }
@@ -183,13 +206,22 @@ function assertAccount(value) {
 }
 
 function assertMatches(value) {
-  if (value !== BRIDGE_MATCHES) throw new TypeError("matches must be 50");
-  return BRIDGE_MATCHES;
+  if (!ALLOWED_MATCHES.includes(value)) {
+    throw new TypeError("matches must be one of 50, 100, or 150");
+  }
+  return value;
 }
 
-function assertSample(value) {
-  if (!Number.isSafeInteger(value) || value < 0 || value > BRIDGE_MATCHES) {
-    throw new TypeError("sample must be an integer from 0 through 50");
+function assertMode(value) {
+  if (!ALLOWED_MODES.includes(value)) {
+    throw new TypeError("mode must be ranked or standard");
+  }
+  return value;
+}
+
+function assertSample(value, matches) {
+  if (!Number.isSafeInteger(value) || value < 0 || value > matches) {
+    throw new TypeError(`sample must be an integer from 0 through ${matches}`);
   }
   return value;
 }
@@ -207,22 +239,31 @@ function assertGenerated(value) {
 }
 
 function serializePayload(payload) {
-  const serialized = JSON.stringify(payload);
-  const title = `${TITLE_PREFIX}${serialized}`;
+  const title = TITLE_PREFIX + JSON.stringify(payload);
   if (title.length > TITLE_MAX_LENGTH) {
-    throw new RangeError("bridge title exceeds 2048 code units");
+    throw new RangeError("bridge title exceeds the title length limit");
   }
   return title;
 }
 
-export function buildSuccessPayload({ request, account, matches = BRIDGE_MATCHES, sample, generated, analysis } = {}) {
+export function buildSuccessPayload({
+  request,
+  account,
+  matches,
+  mode,
+  sample,
+  generated,
+  analysis,
+} = {}) {
+  const validatedMatches = assertMatches(matches);
   return {
     v: BRIDGE_VERSION,
     kind: "profile_stats",
     request: assertRequest(request),
     account: assertAccount(account),
-    matches: assertMatches(matches),
-    sample: assertSample(sample),
+    matches: validatedMatches,
+    mode: assertMode(mode),
+    sample: assertSample(sample, validatedMatches),
     generated: assertGenerated(generated),
     groups: selectMetricGroups(analysis),
   };
@@ -257,7 +298,8 @@ function normalizeMessage(value) {
 export function buildErrorPayload({
   request = null,
   account = null,
-  matches = BRIDGE_MATCHES,
+  matches = DEFAULT_MATCHES,
+  mode = DEFAULT_MODE,
   code,
   status = null,
   retry_after = null,
@@ -265,13 +307,13 @@ export function buildErrorPayload({
   message = null,
 } = {}) {
   if (!ERROR_CODE_SET.has(code)) throw new TypeError("code is not allowlisted");
-  assertMatches(matches);
   const payload = {
     v: BRIDGE_VERSION,
     kind: "error",
     request: normalizeRequest(request) ?? "",
     account: normalizeAccount(account),
-    matches: BRIDGE_MATCHES,
+    matches: assertMatches(matches),
+    mode: assertMode(mode),
     code,
   };
   const normalizedStatus = normalizeStatus(status);
@@ -321,23 +363,41 @@ export function validateBridgePayload(payload) {
   if (!isPlainObject(payload) || payload.v !== BRIDGE_VERSION) return false;
   if (payload.kind === "profile_stats") {
     return (
-      exactKeys(payload, ["v", "kind", "request", "account", "matches", "sample", "generated", "groups"]) &&
+      exactKeys(payload, [
+        "v",
+        "kind",
+        "request",
+        "account",
+        "matches",
+        "mode",
+        "sample",
+        "generated",
+        "groups",
+      ]) &&
       normalizeRequest(payload.request) !== null &&
       normalizeAccount(payload.account) !== null &&
-      payload.matches === BRIDGE_MATCHES &&
+      typeof payload.matches === "number" &&
+      normalizeMatches(payload.matches) !== null &&
+      normalizeMode(payload.mode) !== null &&
       Number.isSafeInteger(payload.sample) &&
       payload.sample >= 0 &&
-      payload.sample <= BRIDGE_MATCHES &&
+      payload.sample <= payload.matches &&
       assertPrintableGenerated(payload.generated) &&
       validateGroups(payload.groups)
     );
   }
   if (payload.kind === "error") {
     return (
-      exactKeys(payload, ["v", "kind", "request", "account", "matches", "code"], ["status", "retry_after", "message"]) &&
+      exactKeys(
+        payload,
+        ["v", "kind", "request", "account", "matches", "mode", "code"],
+        ["status", "retry_after", "message"],
+      ) &&
       (payload.request === "" || normalizeRequest(payload.request) !== null) &&
       (payload.account === null || normalizeAccount(payload.account) !== null) &&
-      payload.matches === BRIDGE_MATCHES &&
+      typeof payload.matches === "number" &&
+      normalizeMatches(payload.matches) !== null &&
+      normalizeMode(payload.mode) !== null &&
       ERROR_CODE_SET.has(payload.code) &&
       (payload.status === undefined || normalizeStatus(payload.status) !== null) &&
       (payload.retry_after === undefined || normalizeRetryAfter(payload.retry_after) !== null) &&
@@ -372,9 +432,12 @@ export function parseBridgeTitle(title) {
 }
 
 export {
-  BRIDGE_MATCHES,
+  ALLOWED_MATCHES,
+  ALLOWED_MODES,
   BRIDGE_TITLE,
   BRIDGE_VERSION,
+  DEFAULT_MATCHES,
+  DEFAULT_MODE,
   ERROR_CODES,
   GROUP_IDS,
   METRIC_GROUPS,

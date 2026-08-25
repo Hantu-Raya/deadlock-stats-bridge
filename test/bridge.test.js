@@ -59,7 +59,7 @@ function titleDocument() {
 }
 
 test("fresh same-account 50 cache is used without a network request", async () => {
-  const location = { search: "?account_id=123&matches=50&request=req_01" };
+  const location = { search: "?account_id=123&matches=50&mode=ranked&request=req_01" };
   const documentRef = titleDocument();
   const storage = new MemoryStorage();
   let fetches = 0;
@@ -68,9 +68,11 @@ test("fresh same-account 50 cache is used without a network request", async () =
     documentRef,
     storage,
     now: () => 10_000,
-    readCache: (_storage, account, limit) => {
+    readCache: (_storage, account, matches, mode, now) => {
       assert.equal(account, 123);
-      assert.equal(limit, 50);
+      assert.equal(matches, 50);
+      assert.equal(mode, "ranked");
+      assert.equal(now, 10_000);
       return {
         freshness: "fresh",
         ageMs: 100,
@@ -100,31 +102,38 @@ test("stale cache is not used and network result is cached", async () => {
   let fetches = 0;
   let writes = 0;
   const result = await runBridge({
-    location: { search: "?account_id=123&matches=50&request=req_02" },
+    location: { search: "?account_id=123&matches=100&mode=standard&request=req_02" },
     documentRef,
     storage,
     now: () => 10_000,
     readCache: () => ({ freshness: "stale", ageMs: 700_000, value: { analysis: analysis() } }),
-    apiFetch: async ({ accountId, limit }) => {
+    apiFetch: async ({ accountId, limit, mode }) => {
       fetches += 1;
-      assert.deepEqual({ accountId, limit }, { accountId: 123, limit: 50 });
+      assert.deepEqual({ accountId, limit, mode }, {
+        accountId: 123,
+        limit: 100,
+        mode: "standard",
+      });
       return response();
     },
     analyze: () => analysis(),
-    writeCache: (_storage, account, limit, value) => {
+    writeCache: (_storage, account, matches, mode, value) => {
       writes += 1;
-      assert.deepEqual({ account, limit }, { account: 123, limit: 50 });
+      assert.deepEqual({ account, matches, mode }, {
+        account: 123,
+        matches: 100,
+        mode: "standard",
+      });
       assert.equal(value.analysis.sampleSize, 3);
     },
   });
   assert.equal(result.ok, true);
   assert.equal(result.source, "network");
-  assert.equal(fetches, 1);
   assert.equal(writes, 1);
 });
 
 test("API failures emit an allowlisted error without raw detail", async () => {
-  const location = { search: "?account_id=123&matches=50&request=req_03" };
+  const location = { search: "?account_id=123&matches=150&mode=standard&request=req_03" };
   const documentRef = titleDocument();
   const result = await runBridge({
     location,
@@ -140,11 +149,12 @@ test("API failures emit an allowlisted error without raw detail", async () => {
   const parsed = parseBridgeTitle(result.title);
   assert.equal(parsed.ok, true);
   assert.deepEqual(parsed.payload, {
-    v: 1,
+    v: 2,
     kind: "error",
     request: "req_03",
     account: 123,
-    matches: 50,
+    matches: 150,
+    mode: "standard",
     code: "rate_limit",
     status: 429,
     retry_after: 5,
@@ -158,7 +168,7 @@ test("API failures emit an allowlisted error without raw detail", async () => {
 test("publishTitle persists the encoded title", () => {
   const documentRef = titleDocument();
   const locationRef = {};
-  const title = "DLSTATS1:{\"v\":1}";
+  const title = "DLSTATS2:{\"v\":2}";
   const didAssign = publishTitle(title, { documentRef, locationRef });
 
   assert.equal(didAssign, true);

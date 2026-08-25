@@ -6,7 +6,8 @@ import {
 } from "./cache.js";
 import { analyzePlayer } from "./metrics.js";
 import {
-  BRIDGE_MATCHES,
+  DEFAULT_MATCHES,
+  DEFAULT_MODE,
   buildErrorTitle,
   buildSuccessTitle,
   parseBridgeQuery,
@@ -18,7 +19,7 @@ const ERROR_MESSAGES = Object.freeze({
   network_error: "The stats service could not be reached.",
   upstream_error: "The stats service returned an error.",
   rate_limit: "The stats service is rate limited.",
-  empty_sample: "No ranked matches were available.",
+  empty_sample: "No matches were available.",
   invalid_payload: "The stats service returned invalid data.",
   payload_too_large: "The stats result was too large.",
   internal_error: "The stats bridge failed.",
@@ -55,11 +56,18 @@ function safeIsoNow(now) {
   }
 }
 
-function readFreshCache(storage, account, now, readCache = readCachedResult) {
+function readFreshCache(
+  storage,
+  account,
+  matches,
+  mode,
+  now,
+  readCache = readCachedResult,
+) {
   if (!storage || typeof readCache !== "function") return null;
   let cached;
   try {
-    cached = readCache(storage, account, BRIDGE_MATCHES, now);
+    cached = readCache(storage, account, matches, mode, now);
   } catch {
     return null;
   }
@@ -134,7 +142,8 @@ function buildErrorForQuery(query, code, options = {}) {
   return buildErrorTitle({
     request: query?.request,
     account: query?.account,
-    matches: BRIDGE_MATCHES,
+    matches: query?.matches ?? DEFAULT_MATCHES,
+    mode: query?.mode ?? DEFAULT_MODE,
     code,
     status: options.status,
     retry_after: options.retryAfter,
@@ -167,7 +176,8 @@ function emitError(query, code, options, deps) {
     title = buildErrorTitle({
       request: "",
       account: null,
-      matches: BRIDGE_MATCHES,
+      matches: DEFAULT_MATCHES,
+      mode: DEFAULT_MODE,
       code: "internal_error",
       message: ERROR_MESSAGES.internal_error,
     });
@@ -194,7 +204,14 @@ export async function runBridge({
   }
 
   const currentTime = typeof now === "function" ? now() : now;
-  const fresh = readFreshCache(storage, query.account, currentTime, readCache);
+  const fresh = readFreshCache(
+    storage,
+    query.account,
+    query.matches,
+    query.mode,
+    currentTime,
+    readCache,
+  );
   if (fresh) {
     const analysis = cachedAnalysis(fresh, query.account, analyze);
     if (analysis && !isEmptyAnalysis(analysis)) {
@@ -202,7 +219,8 @@ export async function runBridge({
         const title = buildSuccessTitle({
           request: query.request,
           account: query.account,
-          matches: BRIDGE_MATCHES,
+          matches: query.matches,
+          mode: query.mode,
           sample: analysis.sampleSize,
           generated: cachedGenerated(fresh, now),
           analysis,
@@ -219,7 +237,9 @@ export async function runBridge({
   try {
     response = await apiFetch({
       accountId: query.account,
-      limit: BRIDGE_MATCHES,
+      limit: query.matches,
+      metricsLimit: query.matches,
+      mode: query.mode,
       fetchImpl,
     });
   } catch (error) {
@@ -255,7 +275,8 @@ export async function runBridge({
     title = buildSuccessTitle({
       request: query.request,
       account: query.account,
-      matches: BRIDGE_MATCHES,
+      matches: query.matches,
+      mode: query.mode,
       sample: analysis.sampleSize,
       generated: value.fetchedAt,
       analysis,
@@ -264,9 +285,8 @@ export async function runBridge({
     const code = error?.name === "RangeError" ? "payload_too_large" : "invalid_payload";
     return emitError(query, code, {}, titleOptions);
   }
-
   try {
-    writeCache?.(storage, query.account, BRIDGE_MATCHES, value);
+    writeCache?.(storage, query.account, query.matches, query.mode, value);
   } catch {
     // Cache persistence is opportunistic; a successful request still emits.
   }

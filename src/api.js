@@ -3,6 +3,17 @@ const METADATA_PATH = "/v1/matches/metadata";
 const METRICS_PATH = "/v1/analytics/player-stats/metrics";
 
 const EXTRA_PLAYER_COLUMNS = ["mvp_rank"];
+const API_MATCH_MODES = Object.freeze({
+  ranked: "ranked",
+  standard: "unranked",
+});
+
+function assertMode(value) {
+  if (!Object.prototype.hasOwnProperty.call(API_MATCH_MODES, value)) {
+    throw new TypeError("mode must be ranked or standard");
+  }
+  return API_MATCH_MODES[value];
+}
 
 function assertPositiveInteger(value, name) {
   if (!Number.isSafeInteger(value) || value < 1) {
@@ -11,20 +22,21 @@ function assertPositiveInteger(value, name) {
 }
 
 /**
- * Build the smallest ranked match-metadata request that still contains the
- * match duration, every player's K/D/A, the target player's final stats, and
- * the supplemental MVP/net-worth fields.
+ * Build the smallest match-metadata request that still contains the match
+ * duration, every player's K/D/A, the target player's final stats, and the
+ * supplemental MVP/net-worth fields.
  */
-function buildMetadataUrl(accountId, limit) {
+function buildMetadataUrl(accountId, limit, mode = "ranked") {
   assertPositiveInteger(accountId, "accountId");
   assertPositiveInteger(limit, "limit");
+  const apiMode = assertMode(mode);
 
   const url = new URL(METADATA_PATH, API_ORIGIN);
   const params = url.searchParams;
   params.set("include_info", "true");
   params.set("include_player_kda", "true");
   params.set("include_player_final_stats", "true");
-  params.set("match_mode", "ranked");
+  params.set("match_mode", apiMode);
   params.set("account_ids", String(accountId));
   params.set("extra_player_columns", EXTRA_PLAYER_COLUMNS.join(","));
   params.set("order_by", "start_time");
@@ -34,9 +46,14 @@ function buildMetadataUrl(accountId, limit) {
   return url.toString();
 }
 
-function buildMetricsUrl() {
+function buildMetricsUrl(limit = null, mode = "ranked") {
+  const apiMode = assertMode(mode);
   const url = new URL(METRICS_PATH, API_ORIGIN);
-  url.searchParams.set("match_mode", "ranked");
+  url.searchParams.set("match_mode", apiMode);
+  if (limit !== null && limit !== undefined) {
+    assertPositiveInteger(limit, "limit");
+    url.searchParams.set("max_matches", String(limit));
+  }
   return url.toString();
 }
 
@@ -177,16 +194,26 @@ async function fetchEnvelope(url, fetchImpl, signal) {
   return { url, status, headers, data };
 }
 
-async function fetchDeadlockData({ accountId, limit, signal, fetchImpl = globalThis.fetch } = {}) {
+async function fetchDeadlockData({
+  accountId,
+  limit,
+  matches,
+  mode = "ranked",
+  metricsLimit = null,
+  signal,
+  fetchImpl = globalThis.fetch,
+} = {}) {
+  const requestedLimit = limit ?? matches;
   assertPositiveInteger(accountId, "accountId");
-  assertPositiveInteger(limit, "limit");
+  assertPositiveInteger(requestedLimit, "limit");
+  assertMode(mode);
   if (typeof fetchImpl !== "function") {
     throw new TypeError("fetchImpl must be a function");
   }
 
   const fetchedAt = new Date().toISOString();
-  const metadataUrl = buildMetadataUrl(accountId, limit);
-  const communityUrl = buildMetricsUrl();
+  const metadataUrl = buildMetadataUrl(accountId, requestedLimit, mode);
+  const communityUrl = buildMetricsUrl(metricsLimit, mode);
   const [metadata, community] = await Promise.all([
     fetchEnvelope(metadataUrl, fetchImpl, signal),
     fetchEnvelope(communityUrl, fetchImpl, signal),

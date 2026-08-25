@@ -40,26 +40,26 @@ function put(storage, key, savedAt, value = { ok: true }) {
 test("readCachedResult has deterministic fresh/stale/expired boundaries", () => {
   const storage = new MemoryStorage();
   const now = 2_000_000;
-  const key = "deadlock-stats-cache:v2:50:25";
+  const key = "deadlock-stats-cache:v3:50:25:ranked";
 
   put(storage, key, now);
-  assert.deepEqual(readCachedResult(storage, 50, 25, now), {
+  assert.deepEqual(readCachedResult(storage, 50, 25, "ranked", now), {
     value: { ok: true },
     ageMs: 0,
     freshness: "fresh",
   });
 
   put(storage, key, now - FRESH_TTL_MS + 1);
-  assert.equal(readCachedResult(storage, 50, 25, now).freshness, "fresh");
+  assert.equal(readCachedResult(storage, 50, 25, "ranked", now).freshness, "fresh");
 
   put(storage, key, now - FRESH_TTL_MS);
-  assert.equal(readCachedResult(storage, 50, 25, now).freshness, "stale");
+  assert.equal(readCachedResult(storage, 50, 25, "ranked", now).freshness, "stale");
 
   put(storage, key, now - STALE_TTL_MS + 1);
-  assert.equal(readCachedResult(storage, 50, 25, now).freshness, "stale");
+  assert.equal(readCachedResult(storage, 50, 25, "ranked", now).freshness, "stale");
 
   put(storage, key, now - STALE_TTL_MS);
-  assert.equal(readCachedResult(storage, 50, 25, now), null);
+  assert.equal(readCachedResult(storage, 50, 25, "ranked", now), null);
 });
 
 test("writeCachedResult serializes generic values and read returns them", () => {
@@ -67,12 +67,15 @@ test("writeCachedResult serializes generic values and read returns them", () => 
   const originalNow = Date.now;
   Date.now = () => 4_000_000;
   try {
-    assert.equal(writeCachedResult(storage, 99, 100, { response: [1, 2], analysis: null }), true);
+    assert.equal(
+      writeCachedResult(storage, 99, 100, "standard", { response: [1, 2], analysis: null }),
+      true,
+    );
   } finally {
     Date.now = originalNow;
   }
 
-  const cached = readCachedResult(storage, 99, 100, 4_000_000 + 1);
+  const cached = readCachedResult(storage, 99, 100, "standard", 4_000_000 + 1);
   assert.deepEqual(cached.value, { response: [1, 2], analysis: null });
   assert.equal(cached.ageMs, 1);
 });
@@ -89,24 +92,45 @@ test("writeCachedResult treats unavailable storage as a cache miss", () => {
 test("clearExpiredResults removes only malformed or expired cache entries", () => {
   const storage = new MemoryStorage();
   const now = 8_000_000;
-  put(storage, "deadlock-stats-cache:v2:50:25", now - STALE_TTL_MS - 1);
-  put(storage, "deadlock-stats-cache:v2:50:50", now - 1);
-  storage.setItem("deadlock-stats-cache:v2:bad", "not-json");
+  put(storage, "deadlock-stats-cache:v3:50:25:ranked", now - STALE_TTL_MS - 1);
+  put(storage, "deadlock-stats-cache:v3:50:50:standard", now - 1);
+  storage.setItem("deadlock-stats-cache:v3:bad", "not-json");
   storage.setItem("other-app-key", "keep");
 
   assert.equal(clearExpiredResults(storage, now), 2);
-  assert.equal(storage.getItem("deadlock-stats-cache:v2:50:25"), null);
-  assert.equal(storage.getItem("deadlock-stats-cache:v2:bad"), null);
-  assert.notEqual(storage.getItem("deadlock-stats-cache:v2:50:50"), null);
+  assert.equal(storage.getItem("deadlock-stats-cache:v3:50:25:ranked"), null);
+  assert.equal(storage.getItem("deadlock-stats-cache:v3:bad"), null);
+  assert.notEqual(storage.getItem("deadlock-stats-cache:v3:50:50:standard"), null);
   assert.equal(storage.getItem("other-app-key"), "keep");
 });
 
-test("v1 cache entries are ignored by the comparison cache namespace", () => {
+test("old cache entries are ignored by the new comparison cache namespace", () => {
   const storage = new MemoryStorage();
   const now = 9_000_000;
-  put(storage, "deadlock-stats-cache:v1:50:25", now, { old: true });
+  put(storage, "deadlock-stats-cache:v2:50:25", now, { old: true });
 
-  assert.equal(readCachedResult(storage, 50, 25, now), null);
-  assert.equal(writeCachedResult(storage, 50, 25, { old: false }), true);
-  assert.notEqual(storage.getItem("deadlock-stats-cache:v2:50:25"), null);
+  assert.equal(readCachedResult(storage, 50, 25, "ranked", now), null);
+  assert.equal(writeCachedResult(storage, 50, 25, "ranked", { old: false }), true);
+  assert.notEqual(storage.getItem("deadlock-stats-cache:v3:50:25:ranked"), null);
+});
+
+test("cache identity isolates count and mode", () => {
+  const storage = new MemoryStorage();
+  const originalNow = Date.now;
+  Date.now = () => 10_000_000;
+  try {
+    assert.equal(writeCachedResult(storage, 123, 50, "ranked", { mode: "ranked" }), true);
+    assert.equal(writeCachedResult(storage, 123, 100, "standard", { mode: "standard" }), true);
+  } finally {
+    Date.now = originalNow;
+  }
+
+  assert.deepEqual(readCachedResult(storage, 123, 50, "ranked", 10_000_001).value, {
+    mode: "ranked",
+  });
+  assert.deepEqual(readCachedResult(storage, 123, 100, "standard", 10_000_001).value, {
+    mode: "standard",
+  });
+  assert.equal(readCachedResult(storage, 123, 50, "standard", 10_000_001), null);
+  assert.equal(readCachedResult(storage, 123, 100, "ranked", 10_000_001), null);
 });

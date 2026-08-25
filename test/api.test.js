@@ -8,25 +8,45 @@ import {
   fetchDeadlockData,
 } from "../src/api.js";
 
-test("buildMetadataUrl encodes the ranked target-player request", () => {
-  const url = new URL(buildMetadataUrl(7654321, 50));
-  assert.equal(url.pathname, "/v1/matches/metadata");
-  assert.equal(url.searchParams.get("match_mode"), "ranked");
-  assert.equal(url.searchParams.get("account_ids"), "7654321");
-  assert.equal(url.searchParams.get("limit"), "50");
-  assert.equal(url.searchParams.get("order_by"), "start_time");
-  assert.equal(url.searchParams.get("order_direction"), "desc");
-  assert.equal(url.searchParams.get("include_info"), "true");
-  assert.equal(url.searchParams.get("include_player_kda"), "true");
-  assert.equal(url.searchParams.get("include_player_final_stats"), "true");
-  assert.equal(url.searchParams.get("extra_player_columns"), "mvp_rank");
-  assert.equal(url.searchParams.get("format"), "json");
+test("buildMetadataUrl maps every bridge dataset to the API mode", () => {
+  for (const matches of [50, 100, 150]) {
+    for (const [mode, apiMode] of [["ranked", "ranked"], ["standard", "unranked"]]) {
+      const url = new URL(buildMetadataUrl(7654321, matches, mode));
+      assert.equal(url.pathname, "/v1/matches/metadata");
+      assert.equal(url.searchParams.get("match_mode"), apiMode);
+      assert.equal(url.searchParams.get("account_ids"), "7654321");
+      assert.equal(url.searchParams.get("limit"), String(matches));
+      assert.equal(url.searchParams.get("order_by"), "start_time");
+      assert.equal(url.searchParams.get("order_direction"), "desc");
+      assert.equal(url.searchParams.get("include_info"), "true");
+      assert.equal(url.searchParams.get("include_player_kda"), "true");
+      assert.equal(url.searchParams.get("include_player_final_stats"), "true");
+      assert.equal(url.searchParams.get("extra_player_columns"), "mvp_rank");
+      assert.equal(url.searchParams.get("format"), "json");
+    }
+  }
 });
 
-test("buildMetricsUrl targets ranked community metrics", () => {
+test("buildMetricsUrl maps mode and selected match count", () => {
+  for (const matches of [50, 100, 150]) {
+    for (const [mode, apiMode] of [["ranked", "ranked"], ["standard", "unranked"]]) {
+      const url = new URL(buildMetricsUrl(matches, mode));
+      assert.equal(url.pathname, "/v1/analytics/player-stats/metrics");
+      assert.equal(url.searchParams.get("match_mode"), apiMode);
+      assert.equal(url.searchParams.get("max_matches"), String(matches));
+    }
+  }
+});
+
+test("buildMetricsUrl preserves the app's unbounded default", () => {
   const url = new URL(buildMetricsUrl());
-  assert.equal(url.pathname, "/v1/analytics/player-stats/metrics");
   assert.equal(url.searchParams.get("match_mode"), "ranked");
+  assert.equal(url.searchParams.get("max_matches"), null);
+});
+
+test("API builders reject unsupported modes", () => {
+  assert.throws(() => buildMetadataUrl(7654321, 50, "casual"), /mode/);
+  assert.throws(() => buildMetricsUrl(50, "casual"), /mode/);
 });
 
 test("fetchDeadlockData returns serializable response envelopes", async () => {
@@ -44,10 +64,19 @@ test("fetchDeadlockData returns serializable response envelopes", async () => {
     };
   };
 
-  const result = await fetchDeadlockData({ accountId: 50, limit: 25, signal: "signal", fetchImpl });
+  const result = await fetchDeadlockData({
+    accountId: 50,
+    limit: 100,
+    mode: "standard",
+    metricsLimit: 100,
+    signal: "signal",
+    fetchImpl,
+  });
   assert.equal(calls.length, 2);
   assert.equal(calls[0].options.signal, "signal");
-  assert.equal(result.metadata.status, 200);
+  assert.equal(new URL(calls[0].url).searchParams.get("match_mode"), "unranked");
+  assert.equal(new URL(calls[1].url).searchParams.get("match_mode"), "unranked");
+  assert.equal(new URL(calls[1].url).searchParams.get("max_matches"), "100");
   assert.deepEqual(result.metadata.headers, {
     "content-type": "application/json",
     "x-ratelimit-remaining": "9",
