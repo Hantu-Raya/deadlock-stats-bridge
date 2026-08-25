@@ -96,6 +96,7 @@ test("analyzePlayer compares player values with exact community averages", () =>
     "displayValue",
     "id",
     "label",
+    "percentile",
     "unit",
     "value",
   ].sort());
@@ -223,4 +224,55 @@ test("community composition is independent from player prefix aggregation", () =
   const composed = composePlayerWithCommunity(prefixes.samples["50"], community);
   assert.equal(metric(composed, "kd").value, 3);
   assert.equal(metric(composed, "kd").communityValue, 3.5);
+});
+ 
+function quantiles(avg = 5) {
+  return {
+    avg,
+    percentile1: 0,
+    percentile5: 1,
+    percentile10: 1.5,
+    percentile25: 2,
+    percentile50: 4,
+    percentile75: 6,
+    percentile90: 8,
+    percentile95: 10,
+    percentile99: 11,
+  };
+}
+
+test("composed percentiles interpolate boundaries and invert lower-is-better metrics", () => {
+  const composed = composePlayerWithCommunity({
+    sampleSize: 1,
+    metrics: [
+      { id: "kd", value: -1 },
+      { id: "average-deaths", value: 0 },
+      { id: "damage-taken-per-minute", value: 3 },
+    ],
+  }, {
+    metrics: {
+      kd: quantiles(),
+      deaths: quantiles(),
+      player_damage_taken_per_min: quantiles(),
+    },
+  });
+
+  assert.equal(metric(composed, "kd").percentile, 1);
+  assert.equal(metric(composed, "average-deaths").percentile, 99);
+  assert.equal(metric(composed, "damage-taken-per-minute").percentile, 62.5);
+
+  const high = composePlayerWithCommunity({
+    sampleSize: 1,
+    metrics: [
+      { id: "kd", value: 11 },
+      { id: "average-deaths", value: 11 },
+    ],
+  }, {
+    metrics: {
+      kd: quantiles(),
+      deaths: quantiles(),
+    },
+  });
+  assert.equal(metric(high, "kd").percentile, 99);
+  assert.equal(metric(high, "average-deaths").percentile, 1);
 });

@@ -1,7 +1,10 @@
 const TITLE_PREFIX = "DLSTATS2:";
 const TITLE_MAX_LENGTH = 2048;
 const BRIDGE_TITLE = "Deadlock Stats Bridge";
-const BRIDGE_VERSION = 2;
+const LEGACY_BRIDGE_VERSION = 2;
+const BRIDGE_VERSION = 3;
+const DEFAULT_PROTOCOL = LEGACY_BRIDGE_VERSION;
+const SUPPORTED_PROTOCOLS = Object.freeze([LEGACY_BRIDGE_VERSION, BRIDGE_VERSION]);
 const ALLOWED_MATCHES = Object.freeze([50, 100, 150]);
 const ALLOWED_MODES = Object.freeze(["ranked", "standard"]);
 const DEFAULT_MATCHES = 50;
@@ -14,7 +17,7 @@ const ACCOUNT_PATTERN = /^\d+$/;
 const REQUEST_PATTERN = /^[A-Za-z0-9._~-]{1,64}$/;
 const PRINTABLE_ASCII_PATTERN = /^[\x20-\x7E]*$/;
 
-const METRIC_GROUPS = Object.freeze([
+const LEGACY_METRIC_GROUPS = Object.freeze([
   Object.freeze({
     id: "combat",
     metrics: Object.freeze([
@@ -58,6 +61,29 @@ const METRIC_GROUPS = Object.freeze([
     ]),
   }),
 ]);
+
+const METRIC_GROUPS = Object.freeze([
+  LEGACY_METRIC_GROUPS[0],
+  LEGACY_METRIC_GROUPS[1],
+  LEGACY_METRIC_GROUPS[2],
+  Object.freeze({
+    id: "damage",
+    metrics: Object.freeze([
+      Object.freeze({ id: "player_damage_per_minute", source: "player-damage-per-minute" }),
+      Object.freeze({ id: "accuracy", source: "accuracy" }),
+      Object.freeze({ id: "critical_hit_rate", source: "critical-hit-rate" }),
+      Object.freeze({ id: "boss_damage_per_minute", source: "boss-damage-per-minute" }),
+    ]),
+  }),
+  Object.freeze({
+    id: "economy",
+    metrics: Object.freeze([
+      Object.freeze({ id: "net_worth_per_minute", source: "net-worth-per-minute" }),
+    ]),
+  }),
+  LEGACY_METRIC_GROUPS[5],
+]);
+
 const METRIC_SOURCES = Object.freeze(
   METRIC_GROUPS.flatMap((group) => group.metrics.map((metric) => metric.source)),
 );
@@ -108,6 +134,11 @@ export function normalizeMode(value) {
   return typeof value === "string" && ALLOWED_MODES.includes(value) ? value : null;
 }
 
+export function normalizeProtocol(value) {
+  const protocol = typeof value === "string" && /^\d+$/.test(value) ? Number(value) : value;
+  return SUPPORTED_PROTOCOLS.includes(protocol) ? protocol : null;
+}
+
 export function normalizeRequest(value) {
   return (
     typeof value === "string" &&
@@ -130,6 +161,7 @@ export function parseBridgeQuery(search = "") {
       matches: null,
       mode: null,
       request: null,
+      protocol: DEFAULT_PROTOCOL,
       message: "Invalid bridge request.",
     };
   }
@@ -138,6 +170,8 @@ export function parseBridgeQuery(search = "") {
   const rawMatches = oneQueryValue(params, "matches");
   const rawMode = oneQueryValue(params, "mode");
   const rawRequest = oneQueryValue(params, "request");
+  const rawProtocol = oneQueryValue(params, "protocol");
+  const protocol = params.has("protocol") ? normalizeProtocol(rawProtocol) : DEFAULT_PROTOCOL;
   const account = normalizeAccount(rawAccount);
   const normalizedMatches = normalizeMatches(rawMatches);
   const matches =
@@ -147,7 +181,7 @@ export function parseBridgeQuery(search = "") {
   const mode = normalizeMode(rawMode);
   const request = normalizeRequest(rawRequest);
 
-  if (account === null || matches === null || mode === null || request === null) {
+  if (account === null || matches === null || mode === null || request === null || protocol === null) {
     return {
       ok: false,
       code: "invalid_query",
@@ -155,6 +189,7 @@ export function parseBridgeQuery(search = "") {
       matches,
       mode,
       request,
+      protocol,
       message: "Invalid bridge request.",
     };
   }
@@ -165,6 +200,7 @@ export function parseBridgeQuery(search = "") {
     matches,
     mode,
     request,
+    protocol,
   };
 }
 
@@ -181,7 +217,17 @@ function metricValue(metric, key) {
   return roundMetric(metric[key]);
 }
 
-export function selectMetricGroups(analysis) {
+function percentileValue(metric) {
+  const value = metricValue(metric, "percentile");
+  return value === null || value < 0 || value > 100 ? null : value;
+}
+
+function metricGroupsForProtocol(protocol) {
+  return protocol === BRIDGE_VERSION ? METRIC_GROUPS : LEGACY_METRIC_GROUPS;
+}
+
+export function selectMetricGroups(analysis, protocol = DEFAULT_PROTOCOL) {
+  const selectedProtocol = assertProtocol(protocol);
   const metrics = Array.isArray(analysis?.metrics) ? analysis.metrics : [];
   if (metrics.length !== METRIC_SOURCES.length) {
     throw new TypeError("analysis must contain every comparison metric");
@@ -197,15 +243,17 @@ export function selectMetricGroups(analysis) {
     }
     byId.set(metric.id, metric);
   }
-  return METRIC_GROUPS.map((group) => ({
+  return metricGroupsForProtocol(selectedProtocol).map((group) => ({
     id: group.id,
     metrics: group.metrics.map((definition) => {
       const metric = byId.get(definition.source);
-      return {
+      const result = {
         id: definition.id,
         player: metricValue(metric, "value"),
         community: metricValue(metric, "communityValue"),
       };
+      if (selectedProtocol === BRIDGE_VERSION) result.percentile = percentileValue(metric);
+      return result;
     }),
   }));
 }
@@ -234,6 +282,12 @@ function assertMode(value) {
     throw new TypeError("mode must be ranked or standard");
   }
   return value;
+}
+
+function assertProtocol(value) {
+  const protocol = normalizeProtocol(value);
+  if (protocol === null) throw new TypeError("protocol must be 2 or 3");
+  return protocol;
 }
 
 function assertSample(value, matches) {
@@ -271,10 +325,12 @@ export function buildSuccessPayload({
   sample,
   generated,
   analysis,
+  protocol = DEFAULT_PROTOCOL,
 } = {}) {
+  const selectedProtocol = assertProtocol(protocol);
   const validatedMatches = assertMatches(matches);
   return {
-    v: BRIDGE_VERSION,
+    v: selectedProtocol,
     kind: "profile_stats",
     request: assertRequest(request),
     account: assertAccount(account),
@@ -282,7 +338,7 @@ export function buildSuccessPayload({
     mode: assertMode(mode),
     sample: assertSample(sample, validatedMatches),
     generated: assertGenerated(generated),
-    groups: selectMetricGroups(analysis),
+    groups: selectMetricGroups(analysis, selectedProtocol),
   };
 }
 
@@ -322,10 +378,11 @@ export function buildErrorPayload({
   retry_after = null,
   retryAfter = null,
   message = null,
+  protocol = DEFAULT_PROTOCOL,
 } = {}) {
   if (!ERROR_CODE_SET.has(code)) throw new TypeError("code is not allowlisted");
   const payload = {
-    v: BRIDGE_VERSION,
+    v: assertProtocol(protocol),
     kind: "error",
     request: normalizeRequest(request) ?? "",
     account: normalizeAccount(account),
@@ -358,26 +415,42 @@ function validMetricValue(value) {
   return value === null || (typeof value === "number" && Number.isFinite(value));
 }
 
-function validateGroups(groups) {
-  if (!Array.isArray(groups) || groups.length !== METRIC_GROUPS.length) return false;
+function validMetricPercentile(value) {
+  return value === null || (
+    typeof value === "number" &&
+    Number.isFinite(value) &&
+    value >= 0 &&
+    value <= 100
+  );
+}
+
+function validateGroups(groups, protocol) {
+  const definitions = metricGroupsForProtocol(protocol);
+  const hasPercentile = protocol === BRIDGE_VERSION;
+  if (!Array.isArray(groups) || groups.length !== definitions.length) return false;
   return groups.every((group, groupIndex) => {
-    const definition = METRIC_GROUPS[groupIndex];
+    const definition = definitions[groupIndex];
     if (!exactKeys(group, ["id", "metrics"]) || group.id !== definition.id) return false;
     if (!Array.isArray(group.metrics) || group.metrics.length !== definition.metrics.length) return false;
     return group.metrics.every((metric, metricIndex) => {
       const expected = definition.metrics[metricIndex];
+      const required = hasPercentile
+        ? ["id", "player", "community", "percentile"]
+        : ["id", "player", "community"];
       return (
-        exactKeys(metric, ["id", "player", "community"]) &&
+        exactKeys(metric, required) &&
         metric.id === expected.id &&
         validMetricValue(metric.player) &&
-        validMetricValue(metric.community)
+        validMetricValue(metric.community) &&
+        (!hasPercentile || validMetricPercentile(metric.percentile))
       );
     });
   });
 }
 
 export function validateBridgePayload(payload) {
-  if (!isPlainObject(payload) || payload.v !== BRIDGE_VERSION) return false;
+  if (!isPlainObject(payload) || !SUPPORTED_PROTOCOLS.includes(payload.v)) return false;
+  const protocol = payload.v;
   if (payload.kind === "profile_stats") {
     return (
       exactKeys(payload, [
@@ -400,7 +473,7 @@ export function validateBridgePayload(payload) {
       payload.sample >= 0 &&
       payload.sample <= payload.matches &&
       assertPrintableGenerated(payload.generated) &&
-      validateGroups(payload.groups)
+      validateGroups(payload.groups, protocol)
     );
   }
   if (payload.kind === "error") {
@@ -455,10 +528,13 @@ export {
   BRIDGE_VERSION,
   DEFAULT_MATCHES,
   DEFAULT_MODE,
+  DEFAULT_PROTOCOL,
   ERROR_CODES,
   GROUP_IDS,
+  LEGACY_BRIDGE_VERSION,
   METRIC_GROUPS,
   REQUEST_MAX_LENGTH,
+  SUPPORTED_PROTOCOLS,
   TITLE_MAX_LENGTH,
   TITLE_PREFIX,
 };

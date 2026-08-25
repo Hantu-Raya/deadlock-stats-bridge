@@ -126,7 +126,7 @@ test("player and community clocks distinguish fresh, stale, expired, and future 
   assert.equal(readCommunityCache(communityStorage, "ranked", "all", now + COMMUNITY_FRESH_TTL_MS).freshness, "stale");
   assert.equal(readCommunityCache(communityStorage, "ranked", "all", now + STALE_TTL_MS), null);
 
-  const communityKey = "deadlock-stats-community:v1:ranked:all";
+  const communityKey = "deadlock-stats-community:v2:ranked:all";
   communityStorage.setItem(communityKey, JSON.stringify({
     kind: "community",
     mode: "ranked",
@@ -141,13 +141,50 @@ test("player and community clocks distinguish fresh, stale, expired, and future 
 test("community cache is independent by mode and requested match scope", () => {
   const storage = new MemoryStorage();
   const now = 4_000_000;
-  assert.equal(writeCommunityCache(storage, "ranked", "all", { metrics: { kills: { avg: 4 } } }, now), true);
+  assert.equal(writeCommunityCache(storage, "ranked", "all", {
+    metrics: {
+      kills: {
+        avg: 4,
+        percentile1: 0,
+        percentile5: 1,
+        percentile10: 2,
+        percentile25: 3,
+        percentile50: 4,
+        percentile75: 5,
+        percentile90: 6,
+        percentile95: 7,
+        percentile99: 8,
+        std: 99,
+      },
+    },
+  }, now), true);
   assert.equal(writeCommunityCache(storage, "ranked", "50", { metrics: { kills: { avg: 3 } } }, now), true);
   assert.equal(writeCommunityCache(storage, "standard", "all", { metrics: { kills: { avg: 2 } } }, now), true);
 
+  const raw = JSON.parse(storage.getItem("deadlock-stats-community:v2:ranked:all"));
+  assert.deepEqual(raw.metrics.kills, {
+    avg: 4,
+    percentile1: 0,
+    percentile5: 1,
+    percentile10: 2,
+    percentile25: 3,
+    percentile50: 4,
+    percentile75: 5,
+    percentile90: 6,
+    percentile95: 7,
+    percentile99: 8,
+  });
   assert.equal(readCommunityCache(storage, "ranked", "all", now).value.metrics.kills.avg, 4);
+  assert.equal(readCommunityCache(storage, "ranked", "all", now).value.metrics.kills.percentile99, 8);
   assert.equal(readCommunityCache(storage, "ranked", "50", now).value.metrics.kills.avg, 3);
   assert.equal(readCommunityCache(storage, "standard", "all", now).value.metrics.kills.avg, 2);
+  storage.setItem("deadlock-stats-community:v1:ranked:all", JSON.stringify({
+    kind: "community",
+    mode: "ranked",
+    scope: "all",
+    metrics: { kills: { avg: 1 } },
+    savedAt: now,
+  }));
   assert.equal(readCommunityCache(storage, "standard", "50", now), null);
   assert.equal(writeCommunityCache(storage, "ranked", "recent", { metrics: { kills: { avg: 1 } } }, now), false);
 });
@@ -207,6 +244,7 @@ test("legacy namespaces are purged and bounded writes clean expired entries", ()
     "deadlock-stats-bridge-cache:v1:old",
     "deadlock-stats-compat:v1:old",
     "deadlock-stats-bridge:v2:old",
+    "deadlock-stats-community:v1:old",
   ];
   for (const key of legacyKeys) storage.setItem(key, "x");
   storage.setItem("unrelated-storage", "keep");
@@ -239,7 +277,7 @@ test("legacy namespaces are purged and bounded writes clean expired entries", ()
   assert.equal(storage.getItem("deadlock-stats-player:v1:50:ranked"), null);
   assert.equal(storage.getItem("deadlock-stats-player:v1:51:ranked"), null);
   assert.equal(storage.getItem("deadlock-stats-rate:v1:malformed"), null);
-  assert.notEqual(storage.getItem("deadlock-stats-community:v1:standard:all"), null);
+  assert.notEqual(storage.getItem("deadlock-stats-community:v2:standard:all"), null);
 });
 
 test("rate headers persist cooldown state and expose remaining reset time", () => {

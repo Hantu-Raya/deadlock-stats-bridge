@@ -154,6 +154,17 @@ test("invalid queries publish a DLSTATS2 invalid_query payload without requests"
   assert.equal(location.hash, encodeURIComponent(result.title));
 });
 
+
+test("protocol 3 invalid queries publish v3 errors", async () => {
+  const result = await runBridge({
+    location: { search: "?account_id=123&matches=25&mode=ranked&request=req_invalid_v3&protocol=3" },
+    documentRef: titleDocument(),
+    fetchMetadata: async () => { throw new Error("metadata should not be requested"); },
+    fetchCommunity: async () => { throw new Error("community should not be requested"); },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(parseBridgeTitle(result.title).payload.v, 3);
+});
 test("fresh player and community caches serve a 50-match request without network requests", async () => {
   const location = { search: "?account_id=123&matches=50&mode=ranked&request=req_cache" };
   const documentRef = titleDocument();
@@ -191,6 +202,25 @@ test("fresh player and community caches serve a 50-match request without network
   assert.equal(parseBridgeTitle(result.title).payload.v, 2);
   assert.equal(documentRef.title, result.title);
   assert.equal(location.hash, encodeURIComponent(result.title));
+});
+
+test("protocol 3 requests publish percentile-shaped metrics", async () => {
+  const result = await runBridge({
+    location: { search: "?account_id=123&matches=50&mode=ranked&request=req_v3&protocol=3" },
+    documentRef: titleDocument(),
+    now: () => 10_000,
+    readPlayer: () => fresh(playerValue()),
+    readCommunity: (_storage, mode, scope) => fresh(communityValue(mode, scope)),
+    fetchMetadata: async () => { throw new Error("metadata should not be requested"); },
+    fetchCommunity: async () => { throw new Error("community should not be requested"); },
+  });
+
+  assert.equal(result.ok, true);
+  const payload = parseBridgeTitle(result.title).payload;
+  assert.equal(payload.v, 3);
+  assert.ok(payload.groups.every((group) => group.metrics.every((metric) => (
+    Object.keys(metric).join(",") === "id,player,community,percentile"
+  ))));
 });
 
 test("malformed fresh player cache falls through to metadata and preserves the community cache", async () => {

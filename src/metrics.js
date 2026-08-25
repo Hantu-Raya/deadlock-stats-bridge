@@ -16,6 +16,20 @@ const METRIC_DEFINITIONS = [
   { id: "healing-per-minute", label: "Healing per minute", unit: "healing/min", communityField: "healing_per_min", format: formatNumber, calculate: (row) => perMinute(row.healing, row.durationSeconds) },
 ];
 
+const COMMUNITY_PERCENTILE_FIELDS = Object.freeze([
+  { field: "percentile1", percentile: 1 },
+  { field: "percentile5", percentile: 5 },
+  { field: "percentile10", percentile: 10 },
+  { field: "percentile25", percentile: 25 },
+  { field: "percentile50", percentile: 50 },
+  { field: "percentile75", percentile: 75 },
+  { field: "percentile90", percentile: 90 },
+  { field: "percentile95", percentile: 95 },
+  { field: "percentile99", percentile: 99 },
+]);
+
+const LOWER_IS_BETTER_METRICS = new Set(["average-deaths", "damage-taken-per-minute"]);
+
 function finiteNumber(value) {
   if (typeof value === "number") return Number.isFinite(value) ? value : null;
   if (typeof value !== "string" || value.trim() === "") return null;
@@ -186,14 +200,56 @@ function killParticipation(row) {
 function communityRoot(community) {
   const root = unwrapData(community);
   if (root?.metrics && typeof root.metrics === "object") return root.metrics;
-  if (root?.data && typeof root.data === "object" && !Array.isArray(root.data)) return root.data;
+  if (root?.data?.metrics && typeof root.data.metrics === "object") return root.data.metrics;
   return root;
 }
 
-function communityAverage(community, field) {
+function communityMetricEntry(community, field) {
   const root = communityRoot(community);
   if (!root || typeof root !== "object") return null;
-  return finiteNumber(root[field]?.avg);
+  const entry = root[field];
+  return entry && typeof entry === "object" && !Array.isArray(entry) ? entry : null;
+}
+
+function communityAverage(community, field) {
+  return finiteNumber(communityMetricEntry(community, field)?.avg);
+}
+
+function clampPercentile(value) {
+  return Math.min(99, Math.max(1, value));
+}
+
+function interpolatePercentile(value, entry) {
+  const thresholds = COMMUNITY_PERCENTILE_FIELDS.map(({ field, percentile }) => ({
+    percentile,
+    value: finiteNumber(entry?.[field]),
+  }));
+  if (
+    thresholds.some((threshold) => threshold.value === null) ||
+    thresholds.some((threshold, index) => index > 0 && threshold.value < thresholds[index - 1].value)
+  ) {
+    return null;
+  }
+
+  if (value <= thresholds[0].value) return 1;
+  for (let index = 1; index < thresholds.length; index += 1) {
+    const previous = thresholds[index - 1];
+    const current = thresholds[index];
+    if (value > current.value) continue;
+    const span = current.value - previous.value;
+    if (span <= 0) return current.percentile;
+    const fraction = (value - previous.value) / span;
+    return clampPercentile(previous.percentile + fraction * (current.percentile - previous.percentile));
+  }
+  return 99;
+}
+
+function performancePercentile(value, entry, lowerIsBetter) {
+  const numericValue = finiteNumber(value);
+  if (numericValue === null || !entry) return null;
+  const percentile = interpolatePercentile(numericValue, entry);
+  if (percentile === null) return null;
+  return clampPercentile(lowerIsBetter ? 100 - percentile : percentile);
 }
 
 function supplementalValue(value, unit, format) {
@@ -211,6 +267,7 @@ function aggregateRows(rows) {
       displayValue: definition.format(value),
       communityValue: null,
       communityDisplayValue: null,
+      percentile: null,
       unit: definition.unit,
     };
   });
@@ -250,11 +307,16 @@ export function composePlayerWithCommunity(playerAggregate, community) {
   const metrics = Array.isArray(playerAggregate.metrics)
     ? playerAggregate.metrics.map((metric) => {
         const definition = METRIC_DEFINITIONS.find((candidate) => candidate.id === metric?.id);
-        const communityValue = definition ? communityAverage(community, definition.communityField) : null;
+        const communityEntry = definition ? communityMetricEntry(community, definition.communityField) : null;
+        const communityValue = finiteNumber(communityEntry?.avg);
+        const percentile = definition
+          ? performancePercentile(metric?.value, communityEntry, LOWER_IS_BETTER_METRICS.has(definition.id))
+          : null;
         return {
           ...metric,
           communityValue,
           communityDisplayValue: definition ? definition.format(communityValue) : null,
+          percentile,
         };
       })
     : [];

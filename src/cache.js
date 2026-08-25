@@ -1,17 +1,29 @@
 const PLAYER_CACHE_PREFIX = "deadlock-stats-player:v1:";
-const COMMUNITY_CACHE_PREFIX = "deadlock-stats-community:v1:";
+const COMMUNITY_CACHE_PREFIX = "deadlock-stats-community:v2:";
 const RATE_CACHE_PREFIX = "deadlock-stats-rate:v1:";
 const RATE_BLOCK_PREFIX = "deadlock-stats-rate-block:v1:";
 const OWNER_PREFIX = "deadlock-stats-owner:v1:";
 
 const CACHE_MODES = new Set(["ranked", "standard"]);
-const COMMUNITY_SCOPES = /^(?:all|\d+)$/;
+const COMMUNITY_SCOPES = /^(?:all|25|50|100|150|200)$/;
+const COMMUNITY_QUANTILE_FIELDS = Object.freeze([
+  "percentile1",
+  "percentile5",
+  "percentile10",
+  "percentile25",
+  "percentile50",
+  "percentile75",
+  "percentile90",
+  "percentile95",
+  "percentile99",
+]);
 const LEGACY_PREFIXES = [
   "deadlock-stats-cache:v2:",
   "deadlock-stats-cache:v3:",
   "deadlock-stats-bridge-cache:v1:",
   "deadlock-stats-compat:v1:",
   "deadlock-stats-bridge:v2:",
+  "deadlock-stats-community:v1:",
 ];
 
 export const FRESH_TTL_MS = 10 * 60 * 1000;
@@ -256,7 +268,7 @@ function writeBounded(storage, key, entry, now) {
 function compactMetric(metric) {
   if (!metric || typeof metric !== "object" || Array.isArray(metric)) return null;
   const result = {};
-  for (const key of ["id", "label", "value", "displayValue", "communityValue", "communityDisplayValue", "unit"]) {
+  for (const key of ["id", "label", "value", "displayValue", "communityValue", "communityDisplayValue", "percentile", "unit"]) {
     if (Object.prototype.hasOwnProperty.call(metric, key)) result[key] = metric[key];
   }
   return result;
@@ -302,6 +314,13 @@ function compactPlayerValue(value, accountId, mode, now) {
   };
 }
 
+function communityNumber(value) {
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  if (typeof value !== "string" || value.trim() === "") return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
 function communityMetricMap(value) {
   const source = value?.metrics && typeof value.metrics === "object"
     ? value.metrics
@@ -314,9 +333,14 @@ function communityMetricMap(value) {
   const metrics = {};
   for (const [key, entry] of Object.entries(source)) {
     if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
-    const avg = Number(entry.avg);
-    if (!Number.isFinite(avg)) continue;
-    metrics[key] = { avg };
+    const avg = communityNumber(entry.avg);
+    if (avg === null) continue;
+    const compact = { avg };
+    for (const field of COMMUNITY_QUANTILE_FIELDS) {
+      const quantile = communityNumber(entry[field]);
+      if (quantile !== null) compact[field] = quantile;
+    }
+    metrics[key] = compact;
   }
   return Object.keys(metrics).length ? metrics : null;
 }

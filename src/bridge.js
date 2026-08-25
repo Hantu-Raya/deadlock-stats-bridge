@@ -9,9 +9,9 @@ import {
   withResourceOwnership,
   writeCommunityCache,
   writePlayerCache,
-} from "./cache.js";
-import { aggregatePlayerPrefixes, composePlayerWithCommunity } from "./metrics.js";
-import { DEFAULT_MATCHES, DEFAULT_MODE, buildErrorTitle, buildSuccessTitle, parseBridgeQuery, TITLE_MAX_LENGTH } from "./title-protocol.js";
+} from "./cache.js?v=20260825-3";
+import { aggregatePlayerPrefixes, composePlayerWithCommunity } from "./metrics.js?v=20260825-3";
+import { DEFAULT_MATCHES, DEFAULT_MODE, DEFAULT_PROTOCOL, buildErrorTitle, buildSuccessTitle, parseBridgeQuery, TITLE_MAX_LENGTH } from "./title-protocol.js?v=20260825-3";
 
 const ERROR_MESSAGES = Object.freeze({
   invalid_query: "Invalid bridge request.",
@@ -50,7 +50,7 @@ function genericError(error) {
 }
 
 function buildErrorForQuery(query, code, options = {}) {
-  return buildErrorTitle({ request: query?.request, account: query?.account, matches: query?.matches ?? DEFAULT_MATCHES, mode: query?.mode ?? DEFAULT_MODE, code, status: options.status, retry_after: options.retryAfter, message: ERROR_MESSAGES[code] ?? ERROR_MESSAGES.internal_error });
+  return buildErrorTitle({ request: query?.request, account: query?.account, matches: query?.matches ?? DEFAULT_MATCHES, mode: query?.mode ?? DEFAULT_MODE, protocol: query?.protocol ?? DEFAULT_PROTOCOL, code, status: options.status, retry_after: options.retryAfter, message: ERROR_MESSAGES[code] ?? ERROR_MESSAGES.internal_error });
 }
 
 function publishTitle(title, { documentRef = defaultDocument(), locationRef = defaultLocation() } = {}) {
@@ -60,7 +60,7 @@ function publishTitle(title, { documentRef = defaultDocument(), locationRef = de
 
 function emitError(query, code, options, deps) {
   let title;
-  try { title = buildErrorForQuery(query, code, options); } catch { title = buildErrorTitle({ request: "", account: null, matches: DEFAULT_MATCHES, mode: DEFAULT_MODE, code: "internal_error", message: ERROR_MESSAGES.internal_error }); }
+  try { title = buildErrorForQuery(query, code, options); } catch { title = buildErrorTitle({ request: "", account: null, matches: DEFAULT_MATCHES, mode: DEFAULT_MODE, protocol: query?.protocol ?? DEFAULT_PROTOCOL, code: "internal_error", message: ERROR_MESSAGES.internal_error }); }
   publishTitle(title, deps);
   return { ok: false, title, code };
 }
@@ -297,7 +297,7 @@ export async function runBridge(options = {}) {
   const generated = stale
     ? oldestGenerated(player.value?.fetchedAt, community?.value?.fetchedAt, safeIsoNow(deps.now))
     : player.value?.fetchedAt ?? safeIsoNow(deps.now);
-  try { title = buildSuccessTitle({ request: query.request, account: query.account, matches: query.matches, mode: query.mode, sample: analysis.sampleSize, generated, analysis }); } catch (error) { return emitError(query, error?.name === "RangeError" ? "payload_too_large" : "invalid_payload", {}, titleOptions); }
+  try { title = buildSuccessTitle({ request: query.request, account: query.account, matches: query.matches, mode: query.mode, protocol: query.protocol, sample: analysis.sampleSize, generated, analysis }); } catch (error) { return emitError(query, error?.name === "RangeError" ? "payload_too_large" : "invalid_payload", {}, titleOptions); }
   if (deps.signal?.aborted) return { ok: false, aborted: true };
   publishTitle(title, titleOptions);
   const source = stale

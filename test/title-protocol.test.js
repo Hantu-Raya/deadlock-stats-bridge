@@ -4,7 +4,10 @@ import assert from "node:assert/strict";
 import {
   ALLOWED_MATCHES,
   ALLOWED_MODES,
+  BRIDGE_VERSION,
   DEFAULT_MATCHES,
+  DEFAULT_PROTOCOL,
+  LEGACY_BRIDGE_VERSION,
   TITLE_MAX_LENGTH,
   TITLE_PREFIX,
   buildErrorPayload,
@@ -14,6 +17,7 @@ import {
   parseBridgeQuery,
   parseBridgeTitle,
   selectMetricGroups,
+  validateBridgePayload,
 } from "../src/title-protocol.js";
 
 const METRIC_IDS = [
@@ -38,6 +42,7 @@ function analysis(values = {}) {
       id,
       value: values[id]?.player ?? 1.234,
       communityValue: values[id]?.community ?? 9.876,
+      percentile: values[id]?.percentile ?? 50,
     })),
   };
 }
@@ -53,9 +58,13 @@ test("bridge query requires exactly one valid account, count, mode, and nonce", 
         matches,
         mode,
         request: "req_01",
+        protocol: DEFAULT_PROTOCOL,
       });
     }
   }
+  assert.equal(parseBridgeQuery("?account_id=123&matches=50&mode=ranked&request=req_01&protocol=3").protocol, 3);
+  assert.equal(parseBridgeQuery("?account_id=123&matches=50&mode=ranked&request=req_01&protocol=2").protocol, 2);
+  assert.equal(parseBridgeQuery("?account_id=123&matches=50&mode=ranked&request=req_01&protocol=4").ok, false);
 
   assert.equal(parseBridgeQuery("?account_id=0&matches=50&mode=ranked&request=req_01").ok, false);
   assert.equal(parseBridgeQuery("?account_id=123&matches=25&mode=ranked&request=req_01").ok, false);
@@ -79,6 +88,7 @@ test("success payload keeps the six groups and static metric order", () => {
     generated: "2026-08-25T00:00:00.000Z",
     analysis: analysis(),
   });
+  assert.equal(payload.v, LEGACY_BRIDGE_VERSION);
 
   assert.deepEqual(payload.groups.map((group) => group.id), [
     "combat",
@@ -102,6 +112,47 @@ test("success payload keeps the six groups and static metric order", () => {
     "boss_damage_per_minute",
     "healing_per_minute",
   ]);
+});
+
+test("protocol 3 moves boss damage and serializes exact percentile metric keys", () => {
+  const payload = buildSuccessPayload({
+    request: "req_01",
+    account: 123,
+    matches: DEFAULT_MATCHES,
+    mode: "ranked",
+    sample: 7,
+    generated: "2026-08-25T00:00:00.000Z",
+    analysis: analysis(),
+    protocol: BRIDGE_VERSION,
+  });
+
+  assert.equal(payload.v, BRIDGE_VERSION);
+  assert.deepEqual(payload.groups.flatMap((group) => group.metrics.map((metric) => metric.id)), [
+    "kd",
+    "kda",
+    "average_kills",
+    "average_assists",
+    "average_deaths",
+    "damage_taken_per_minute",
+    "player_damage_per_minute",
+    "accuracy",
+    "critical_hit_rate",
+    "boss_damage_per_minute",
+    "net_worth_per_minute",
+    "healing_per_minute",
+  ]);
+  assert.ok(payload.groups.every((group) => group.metrics.every((metric) => {
+    assert.deepEqual(Object.keys(metric), ["id", "player", "community", "percentile"]);
+    return true;
+  })));
+  assert.equal(validateBridgePayload(payload), true);
+  assert.equal(validateBridgePayload({
+    ...payload,
+    groups: payload.groups.map((group) => ({
+      ...group,
+      metrics: group.metrics.map((metric) => ({ ...metric, percentile: 101 })),
+    })),
+  }), false);
 });
 
 test("success and error builders accept each supported count and mode", () => {
@@ -197,8 +248,9 @@ test("titles use the compact prefix and stay within the 2048-code-unit cap", () 
     generated: "x".repeat(64),
     analysis: analysis(Object.fromEntries(METRIC_IDS.map((id) => [
       id,
-      { player: Number.MAX_VALUE, community: Number.MIN_VALUE },
+      { player: Number.MAX_VALUE, community: Number.MIN_VALUE, percentile: 99.99 },
     ]))),
+    protocol: BRIDGE_VERSION,
   });
   assert.equal(title.startsWith(TITLE_PREFIX), true);
   assert.ok(title.length <= TITLE_MAX_LENGTH);
@@ -230,6 +282,19 @@ test("error payloads keep identity fields, mode, allowlisted code, and optional 
   });
   assert.throws(() => buildErrorTitle({ code: "raw_api_body" }), /allowlisted/);
   assert.equal(parseBridgeTitle(buildErrorTitle(payload)).ok, true);
+});
+
+test("protocol 3 errors retain requested version", () => {
+  const payload = buildErrorPayload({
+    request: "req_01",
+    account: 123,
+    matches: DEFAULT_MATCHES,
+    mode: "ranked",
+    code: "invalid_payload",
+    protocol: BRIDGE_VERSION,
+  });
+  assert.equal(payload.v, BRIDGE_VERSION);
+  assert.equal(parseBridgeTitle(buildErrorTitle({ ...payload, protocol: BRIDGE_VERSION })).payload.v, BRIDGE_VERSION);
 });
 
 test("title parsing rejects malformed success identity and error modes", () => {
