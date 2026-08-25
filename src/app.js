@@ -173,6 +173,7 @@ export function createExplorerApp(overrides = {}) {
   let activeMode = null;
   const playerInFlight = new Map();
   const communityInFlight = new Map();
+  const communityControllers = new Map();
   const resumedCooldowns = new Set();
 
   function readPlayer(accountId, mode, now) {
@@ -231,10 +232,15 @@ export function createExplorerApp(overrides = {}) {
     }
   }
 
-  async function fetchCommunityEnvelope(mode, now) {
+  async function fetchCommunityEnvelope(mode, now, signal) {
     await waitForRateWindow(COMMUNITY_RATE_FAMILY, now);
     try {
-      const envelope = await deps.fetchCommunity({ mode, metricsLimit: null, fetchImpl: deps.fetchImpl });
+      const envelope = await deps.fetchCommunity({
+        mode,
+        metricsLimit: null,
+        signal,
+        fetchImpl: deps.fetchImpl,
+      });
       recordResponse(COMMUNITY_RATE_FAMILY, envelope, nowValue(deps.now));
       return envelope;
     } catch (error) {
@@ -298,22 +304,34 @@ export function createExplorerApp(overrides = {}) {
     const key = `${mode}:${scope}`;
     let promise = communityInFlight.get(key);
     if (!promise) {
+      const controller = typeof AbortController === "function" ? new AbortController() : null;
+      communityControllers.set(key, controller);
       promise = (async () => {
-        const ownership = await deps.own({ resourceKey: `community:${key}`, storage: deps.storage, navigatorRef: deps.navigatorRef, now: deps.now, run: async () => {
-          const latest = readCommunity(mode, scope, nowValue(deps.now));
-          if (latest?.freshness === "fresh") return { cache: latest, value: latest.value, source: "cache", envelope: null };
-          const envelope = await fetchCommunityEnvelope(mode, nowValue(deps.now));
-          const value = { metrics: envelope.data?.metrics ?? envelope.data, mode, scope, fetchedAt: safeIso(nowValue(deps.now)) };
-          try { deps.writeCommunityCache(deps.storage, mode, scope, value, nowValue(deps.now)); } catch { /* independent cache */ }
-          return { value, source: "network", envelope };
-        } });
+        const ownership = await deps.own({
+          resourceKey: `community:${key}`,
+          storage: deps.storage,
+          navigatorRef: deps.navigatorRef,
+          signal: controller?.signal,
+          now: deps.now,
+          run: async () => {
+            const latest = readCommunity(mode, scope, nowValue(deps.now));
+            if (latest?.freshness === "fresh") return { cache: latest, value: latest.value, source: "cache", envelope: null };
+            const envelope = await fetchCommunityEnvelope(mode, nowValue(deps.now), controller?.signal);
+            const value = { metrics: envelope.data?.metrics ?? envelope.data, mode, scope, fetchedAt: safeIso(nowValue(deps.now)) };
+            try { deps.writeCommunityCache(deps.storage, mode, scope, value, nowValue(deps.now)); } catch { /* independent cache */ }
+            return { value, source: "network", envelope };
+          },
+        });
         if (ownership?.owned === false) {
           const afterWait = readCommunity(mode, scope, nowValue(deps.now));
           if (afterWait?.freshness === "fresh") return { cache: afterWait, value: afterWait.value, source: "cache", envelope: null };
           throw new Error("Community request ownership expired without a fresh cache result");
         }
         return ownership?.value ?? ownership;
-      })().finally(() => communityInFlight.delete(key));
+      })().finally(() => {
+        if (communityInFlight.get(key) === promise) communityInFlight.delete(key);
+        if (communityControllers.get(key) === controller) communityControllers.delete(key);
+      });
       communityInFlight.set(key, promise);
     }
     try { return await promise; } catch (error) { notifyCooldown(error, now); const fallback = readCommunity(mode, scope, nowValue(deps.now)); if (fallback) return { cache: fallback, value: fallback.value, source: "stale", envelope: null, error }; throw error; }
@@ -350,8 +368,12 @@ export function createExplorerApp(overrides = {}) {
       const superseded = inFlight;
       inFlight = null;
       requestSequence += 1;
-      if (superseded.resourceKey !== resourceKey) superseded.controller.abort();
-      else controller = superseded.controller;
+      if (superseded.resourceKey !== resourceKey) {
+        playerInFlight.delete(superseded.resourceKey);
+        superseded.controller.abort();
+      } else {
+        controller = superseded.controller;
+      }
     }
     if (!controller) controller = new AbortController();
     const sequence = ++requestSequence;
@@ -391,14 +413,23 @@ export function createExplorerApp(overrides = {}) {
   function lookup(controls) { return runLookup({ controls, explicitRefresh: false }); }
   function refresh(controls) { return runLookup({ controls, explicitRefresh: true }); }
   function cancel() {
-    if (!inFlight) return false;
-    const current = inFlight;
-    inFlight = null;
-    requestSequence += 1;
-    playerInFlight.delete(current.resourceKey);
-    current.controller.abort();
-    ui.setLoading?.(false);
-    return true;
+    let cancelled = false;
+    if (inFlight) {
+      const current = inFlight;
+      inFlight = null;
+      requestSequence += 1;
+      playerInFlight.delete(current.resourceKey);
+      current.controller.abort();
+      cancelled = true;
+    }
+    for (const controller of communityControllers.values()) {
+      controller?.abort();
+      cancelled = true;
+    }
+    communityControllers.clear();
+    communityInFlight.clear();
+    if (cancelled) ui.setLoading?.(false);
+    return cancelled;
   }
 
   function start() {
@@ -420,7 +451,13 @@ export function createExplorerApp(overrides = {}) {
   return api;
 }
 
-export function bootstrapExplorer(overrides = {}) { const app = createExplorerApp(overrides); app.start(); return app; }
+export function bootstrapExplorer(overrides = {}) {
+  const app = createExplorerApp(overrides);
+  app.start();
+  const windowRef = overrides.windowRef ?? (typeof window === "undefined" ? null : window);
+  windowRef?.addEventListener?.("pagehide", () => app.cancel(), { once: true });
+  return app;
+}
 function autoBootstrap() { if (typeof window === "undefined" || typeof document === "undefined") return; const start = () => { if (!document.getElementById("lookup")) return; bootstrapExplorer(); }; if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start, { once: true }); else start(); }
 autoBootstrap();
 

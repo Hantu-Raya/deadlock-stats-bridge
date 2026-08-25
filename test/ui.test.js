@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { renderExplorer, setCooldown } from "../src/ui.js";
+import { readControls, renderExplorer, setCooldown, writeControls } from "../src/ui.js";
 
 class FakeElement {
   constructor(tagName) {
@@ -133,6 +133,30 @@ test("a shorter cooldown cannot replace a longer active cooldown", async () => {
     assert.equal(documentRef.getElementById("lookup").disabled, false);
   } finally {
     setCooldown(0);
+    if (previousDocument === undefined) delete globalThis.document;
+    else globalThis.document = previousDocument;
+  }
+});
+
+test("mode controls round-trip standard and ranked selections", () => {
+  const previousDocument = globalThis.document;
+  const documentRef = new FakeDocument();
+  globalThis.document = documentRef;
+  try {
+    documentRef.getElementById("account-id").value = " 215334735 ";
+    documentRef.getElementById("sample-limit").value = "100";
+    documentRef.getElementById("match-mode").value = "standard";
+    assert.deepEqual(readControls(), {
+      accountId: "215334735",
+      limit: 100,
+      mode: "standard",
+    });
+
+    writeControls({ accountId: 50, limit: 25, mode: "ranked" });
+    assert.equal(documentRef.getElementById("account-id").value, "50");
+    assert.equal(documentRef.getElementById("sample-limit").value, "25");
+    assert.equal(documentRef.getElementById("match-mode").value, "ranked");
+  } finally {
     if (previousDocument === undefined) delete globalThis.document;
     else globalThis.document = previousDocument;
   }

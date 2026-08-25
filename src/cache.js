@@ -18,6 +18,7 @@ export const FRESH_TTL_MS = 10 * 60 * 1000;
 export const COMMUNITY_FRESH_TTL_MS = 60 * 60 * 1000;
 export const STALE_TTL_MS = 24 * 60 * 60 * 1000;
 const RATE_JITTER_WINDOW_MS = 60_000;
+const DEFAULT_RATE_LIMIT_BACKOFF_MS = 60_000;
 const MAX_RATE_BLOCK_MS = STALE_TTL_MS;
 export const MAX_CACHE_ENTRIES = 64;
 export const MAX_CACHE_SERIALIZED_BYTES = 1024 * 1024;
@@ -496,8 +497,13 @@ export function updateRateState(storage, family, headers, {
   const retryAfter = headerNumber(normalized, ["retry-after"]);
   const resetMs = reset === null ? 0 : resetDelayMs(reset, now);
   const retryMs = retryAfter === null ? 0 : resetDelayMs(retryAfter, now);
+  const upstreamBlockDelay = Math.max(resetMs, retryMs);
   const blockedDelay = status === 429
-    ? Math.max(resetMs, retryMs)
+    ? upstreamBlockDelay > 0
+      ? upstreamBlockDelay
+      : period !== null && period > 0
+        ? period * 1_000
+        : DEFAULT_RATE_LIMIT_BACKOFF_MS
     : remaining === 0
       ? resetMs
       : 0;

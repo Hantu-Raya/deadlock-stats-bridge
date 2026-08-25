@@ -385,6 +385,42 @@ test("deduplicates same-key requests and aborts superseded work", async () => {
   assert.deepEqual(harness.playerWrites.map(({ id }) => id), [51]);
 });
 
+test("switching back does not reuse an aborted player request", async () => {
+  const pending = [];
+  const harness = createHarness({
+    initialCommunityCache: cached(communityCacheValue(), "fresh", 1_000),
+    own: async ({ run }) => ({ owned: true, value: await run() }),
+    fetchMetadata: ({ accountId, signal }) => new Promise((resolve, reject) => {
+      pending.push({ accountId, resolve, signal });
+      signal.addEventListener("abort", () => {
+        const error = new Error("aborted");
+        error.name = "AbortError";
+        reject(error);
+      }, { once: true });
+    }),
+  });
+  harness.app.start();
+
+  const first = harness.app.lookup();
+  await Promise.resolve();
+  harness.ui.controls.accountId = "51";
+  const second = harness.app.lookup();
+  await Promise.resolve();
+  harness.ui.controls.accountId = "50";
+  const third = harness.app.lookup();
+  await Promise.resolve();
+
+  assert.deepEqual(pending.map(({ accountId }) => accountId), [50, 51, 50]);
+  assert.equal(pending[0].signal.aborted, true);
+  assert.equal(pending[1].signal.aborted, true);
+  assert.equal(pending[2].signal.aborted, false);
+  pending[2].resolve(metadataResponse("2026-08-25T00:02:15.000Z"));
+  const [firstResult, secondResult, thirdResult] = await Promise.all([first, second, third]);
+  assert.equal(firstResult.aborted, true);
+  assert.equal(secondResult.aborted, true);
+  assert.equal(thirdResult.ok, true);
+});
+
 test("cancelled ownership is not reused by an immediate retry", async () => {
   let ownershipCalls = 0;
   const harness = createHarness({
@@ -416,6 +452,34 @@ test("cancelled ownership is not reused by an immediate retry", async () => {
   assert.equal(cancelledResult.aborted, true);
   assert.equal(retriedResult.ok, true);
   assert.equal(ownershipCalls, 2);
+});
+
+test("cancel aborts the independent community request", async () => {
+  let communitySignal = null;
+  const harness = createHarness({
+    own: async ({ run }) => ({ owned: true, value: await run() }),
+    fetchMetadata: async () => metadataResponse("2026-08-25T00:02:45.000Z"),
+    fetchCommunity: ({ signal }) => new Promise((resolve, reject) => {
+      communitySignal = signal;
+      signal.addEventListener("abort", () => {
+        const error = new Error("aborted");
+        error.name = "AbortError";
+        reject(error);
+      }, { once: true });
+    }),
+  });
+  harness.app.start();
+
+  const pending = harness.app.lookup();
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.ok(communitySignal);
+  assert.equal(harness.app.cancel(), true);
+  const result = await pending;
+
+  assert.equal(communitySignal.aborted, true);
+  assert.equal(result.aborted, true);
+  assert.equal(harness.communityWrites.length, 0);
 });
 
 test("does not request without a valid account ID", async () => {

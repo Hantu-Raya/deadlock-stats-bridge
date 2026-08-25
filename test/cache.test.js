@@ -274,6 +274,14 @@ test("rate headers persist cooldown state and expose remaining reset time", () =
   assert.equal(rateCooldownRemaining(storage, "community", now), 17_000);
 });
 
+test("headerless 429 responses persist a conservative cooldown", () => {
+  const storage = new MemoryStorage();
+  const now = 2_000_000;
+  const state = updateRateState(storage, "metadata", {}, { now, status: 429 });
+  assert.equal(state.blockedUntil, now + 60_000);
+  assert.equal(rateCooldownRemaining(storage, "metadata", now), 60_000);
+});
+
 test("Web Locks serialize ownership and let the second caller reuse cache", async () => {
   const tails = new Map();
   const navigatorRef = {

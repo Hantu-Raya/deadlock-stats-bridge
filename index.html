@@ -50,6 +50,15 @@
             <p id="sample-limit-hint" class="field-hint">Used for the player metadata request.</p>
           </div>
 
+          <div class="field-group field-mode">
+            <label for="match-mode">Mode</label>
+            <select id="match-mode" name="mode" aria-describedby="match-mode-hint">
+              <option value="ranked" selected>Ranked</option>
+              <option value="standard">Standard</option>
+            </select>
+            <p id="match-mode-hint" class="field-hint">Ranked or standard matches.</p>
+          </div>
+
           <div class="form-actions">
             <button id="lookup" class="button button-primary" type="submit">Look up</button>
             <button id="refresh" class="button button-secondary" type="button" disabled>Refresh</button>
@@ -168,6 +177,6 @@
       </div>
     </footer>
 
-    <script type="module" src="./src/app.js?v=20260825"></script>
+    <script type="module" src="./src/app.js?v=20260825-2"></script>
   </body>
 </html>

@@ -508,22 +508,26 @@ export function bindExplorerControls({ onLookup, onRefresh } = {}) {
 export function readControls() {
   const accountInput = getElement("account-id");
   const limitInput = getElement("sample-limit");
+  const modeInput = getElement("match-mode");
   const rawLimit = limitInput ? Number(limitInput.value) : 50;
   return {
     accountId: accountInput ? accountInput.value.trim() : "",
     limit: ALLOWED_LIMITS.has(rawLimit) ? rawLimit : 50,
+    mode: modeInput?.value === "standard" ? "standard" : "ranked",
   };
 }
 
-export function writeControls({ accountId, limit } = {}) {
+export function writeControls({ accountId, limit, mode } = {}) {
   const accountInput = getElement("account-id");
   const limitInput = getElement("sample-limit");
+  const modeInput = getElement("match-mode");
   if (accountInput && accountId !== undefined && accountId !== null) {
     accountInput.value = String(accountId);
   }
   if (limitInput && ALLOWED_LIMITS.has(Number(limit))) {
     limitInput.value = String(Number(limit));
   }
+  if (modeInput) modeInput.value = mode === "standard" ? "standard" : "ranked";
 }
 
 export function setCooldown(milliseconds = 0) {
