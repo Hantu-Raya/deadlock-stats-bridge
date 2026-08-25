@@ -1,104 +1,19 @@
-
 export const MAX_METADATA_MATCHES = 200;
 export const MAX_PLAYERS_PER_MATCH = 32;
 
 const METRIC_DEFINITIONS = [
-  {
-    id: "kd",
-    label: "K/D",
-    unit: "ratio",
-    communityField: "kd",
-    format: formatRatio,
-    calculate: (row) => ratio(row.kills, row.deaths),
-  },
-  {
-    id: "kda",
-    label: "KDA",
-    unit: "ratio",
-    communityField: "kda",
-    format: formatRatio,
-    calculate: (row) => ratio(add(row.kills, row.assists), row.deaths),
-  },
-  {
-    id: "average-kills",
-    label: "Average kills",
-    unit: "kills/match",
-    communityField: "kills",
-    format: formatNumber,
-    calculate: (row) => row.kills,
-  },
-  {
-    id: "average-deaths",
-    label: "Average deaths",
-    unit: "deaths/match",
-    communityField: "deaths",
-    format: formatNumber,
-    calculate: (row) => row.deaths,
-  },
-  {
-    id: "average-assists",
-    label: "Average assists",
-    unit: "assists/match",
-    communityField: "assists",
-    format: formatNumber,
-    calculate: (row) => row.assists,
-  },
-  {
-    id: "net-worth-per-minute",
-    label: "Net worth per minute",
-    unit: "net worth/min",
-    communityField: "net_worth_per_min",
-    format: formatNumber,
-    calculate: (row) => perMinute(row.netWorth, row.durationSeconds),
-  },
-  {
-    id: "player-damage-per-minute",
-    label: "Player damage per minute",
-    unit: "damage/min",
-    communityField: "player_damage_per_min",
-    format: formatNumber,
-    calculate: (row) => perMinute(row.playerDamage, row.durationSeconds),
-  },
-  {
-    id: "damage-taken-per-minute",
-    label: "Damage taken per minute",
-    unit: "damage taken/min",
-    communityField: "player_damage_taken_per_min",
-    format: formatNumber,
-    calculate: (row) => perMinute(row.playerDamageTaken, row.durationSeconds),
-  },
-  {
-    id: "accuracy",
-    label: "Accuracy",
-    unit: "%",
-    communityField: "accuracy",
-    format: formatPercent,
-    calculate: (row) => ratio(row.shotsHit, add(row.shotsHit, row.shotsMissed)),
-  },
-  {
-    id: "critical-hit-rate",
-    label: "Critical-hit rate",
-    unit: "%",
-    communityField: "crit_shot_rate",
-    format: formatPercent,
-    calculate: (row) => ratio(row.criticalBullets, add(row.criticalBullets, row.heroBullets)),
-  },
-  {
-    id: "boss-damage-per-minute",
-    label: "Boss damage per minute",
-    unit: "boss damage/min",
-    communityField: "boss_damage_per_min",
-    format: formatNumber,
-    calculate: (row) => perMinute(row.bossDamage, row.durationSeconds),
-  },
-  {
-    id: "healing-per-minute",
-    label: "Healing per minute",
-    unit: "healing/min",
-    communityField: "healing_per_min",
-    format: formatNumber,
-    calculate: (row) => perMinute(row.healing, row.durationSeconds),
-  },
+  { id: "kd", label: "K/D", unit: "ratio", communityField: "kd", format: formatRatio, calculate: (row) => ratio(row.kills, row.deaths) },
+  { id: "kda", label: "KDA", unit: "ratio", communityField: "kda", format: formatRatio, calculate: (row) => ratio(add(row.kills, row.assists), row.deaths) },
+  { id: "average-kills", label: "Average kills", unit: "kills/match", communityField: "kills", format: formatNumber, calculate: (row) => row.kills },
+  { id: "average-deaths", label: "Average deaths", unit: "deaths/match", communityField: "deaths", format: formatNumber, calculate: (row) => row.deaths },
+  { id: "average-assists", label: "Average assists", unit: "assists/match", communityField: "assists", format: formatNumber, calculate: (row) => row.assists },
+  { id: "net-worth-per-minute", label: "Net worth per minute", unit: "net worth/min", communityField: "net_worth_per_min", format: formatNumber, calculate: (row) => perMinute(row.netWorth, row.durationSeconds) },
+  { id: "player-damage-per-minute", label: "Player damage per minute", unit: "damage/min", communityField: "player_damage_per_min", format: formatNumber, calculate: (row) => perMinute(row.playerDamage, row.durationSeconds) },
+  { id: "damage-taken-per-minute", label: "Damage taken per minute", unit: "damage taken/min", communityField: "player_damage_taken_per_min", format: formatNumber, calculate: (row) => perMinute(row.playerDamageTaken, row.durationSeconds) },
+  { id: "accuracy", label: "Accuracy", unit: "%", communityField: "accuracy", format: formatPercent, calculate: (row) => ratio(row.shotsHit, add(row.shotsHit, row.shotsMissed)) },
+  { id: "critical-hit-rate", label: "Critical-hit rate", unit: "%", communityField: "crit_shot_rate", format: formatPercent, calculate: (row) => ratio(row.criticalBullets, add(row.criticalBullets, row.heroBullets)) },
+  { id: "boss-damage-per-minute", label: "Boss damage per minute", unit: "boss damage/min", communityField: "boss_damage_per_min", format: formatNumber, calculate: (row) => perMinute(row.bossDamage, row.durationSeconds) },
+  { id: "healing-per-minute", label: "Healing per minute", unit: "healing/min", communityField: "healing_per_min", format: formatNumber, calculate: (row) => perMinute(row.healing, row.durationSeconds) },
 ];
 
 function finiteNumber(value) {
@@ -175,9 +90,7 @@ function numberFromValue(value) {
     }
     return null;
   }
-  if (value && typeof value === "object" && "value" in value) {
-    return nonNegative(value.value);
-  }
+  if (value && typeof value === "object" && "value" in value) return nonNegative(value.value);
   return nonNegative(value);
 }
 
@@ -224,17 +137,12 @@ function readMatchDuration(match) {
 function readMatchRows(metadata, accountId) {
   const rows = [];
   const matches = asArray(metadata);
-  if (matches.length > MAX_METADATA_MATCHES) {
-    throw new RangeError("metadata match count exceeds limit");
-  }
+  if (matches.length > MAX_METADATA_MATCHES) throw new RangeError("metadata match count exceeds limit");
   for (const match of matches) {
     const players = Array.isArray(match?.players) ? match.players : [];
-    if (players.length > MAX_PLAYERS_PER_MATCH) {
-      throw new RangeError("metadata player count exceeds limit");
-    }
+    if (players.length > MAX_PLAYERS_PER_MATCH) throw new RangeError("metadata player count exceeds limit");
     const player = players.find((candidate) => sameAccount(playerAccountId(candidate), accountId));
     if (!player) continue;
-
     const durationSeconds = readMatchDuration(match);
     const row = {
       match,
@@ -244,7 +152,7 @@ function readMatchRows(metadata, accountId) {
       kills: readPlayerNumber(player, ["kills"]),
       deaths: readPlayerNumber(player, ["deaths"]),
       assists: readPlayerNumber(player, ["assists"]),
-      netWorth: readPlayerNumber(player, ["net_worth", "netWorth"]),
+      netWorth: readPlayerNumber(player?.final_stats ?? {}, ["net_worth", "netWorth"]) ?? readPlayerNumber(player, ["net_worth", "netWorth"]),
       playerDamage: readPlayerNumber(player, ["player_damage", "max_player_damage"]),
       playerDamageTaken: readPlayerNumber(player, ["player_damage_taken", "max_player_damage_taken"]),
       bossDamage: readPlayerNumber(player, ["boss_damage", "max_boss_damage"]),
@@ -257,9 +165,7 @@ function readMatchRows(metadata, accountId) {
       heroBullets: readPlayerNumber(player, ["hero_bullets_hit", "max_hero_bullets_hit"]),
       mvpRank: readPlayerNumber(player, ["mvp_rank", "mvpRank"]),
     };
-    if (row.healing === null) {
-      row.healing = add(row.selfHealing, row.playerHealing);
-    }
+    if (row.healing === null) row.healing = add(row.selfHealing, row.playerHealing);
     rows.push(row);
   }
   return rows;
@@ -272,7 +178,6 @@ function killParticipation(row) {
     .map((player) => readPlayerNumber(player, ["kills"]))
     .filter((value) => value !== null);
   if (teamKills.length === 0 || row.kills === null || row.assists === null) return null;
-
   const teamKillTotal = teamKills.reduce((total, value) => total + value, 0);
   if (teamKillTotal <= 0) return null;
   return (row.kills + row.assists) / teamKillTotal;
@@ -281,50 +186,34 @@ function killParticipation(row) {
 function communityRoot(community) {
   const root = unwrapData(community);
   if (root?.metrics && typeof root.metrics === "object") return root.metrics;
+  if (root?.data && typeof root.data === "object" && !Array.isArray(root.data)) return root.data;
   return root;
 }
 
-function communityEntry(community, field) {
+function communityAverage(community, field) {
   const root = communityRoot(community);
   if (!root || typeof root !== "object") return null;
-  const entry = root[field];
-  return entry && typeof entry === "object" ? entry : null;
-}
-
-function communityAverage(community, field) {
-  const entry = communityEntry(community, field);
-  return finiteNumber(entry?.avg);
+  return finiteNumber(root[field]?.avg);
 }
 
 function supplementalValue(value, unit, format) {
-  return {
-    value,
-    displayValue: format(value),
-    unit,
-  };
+  return { value, displayValue: format(value), unit };
 }
 
-export function analyzePlayer({ accountId, metadata, community } = {}) {
-  const rows = readMatchRows(metadata, accountId);
-  const totalDurationSeconds = rows.reduce(
-    (total, row) => total + (row.durationSeconds ?? 0),
-    0,
-  );
-
+function aggregateRows(rows) {
+  const totalDurationSeconds = rows.reduce((total, row) => total + (row.durationSeconds ?? 0), 0);
   const metrics = METRIC_DEFINITIONS.map((definition) => {
     const value = mean(rows.map(definition.calculate));
-    const communityValue = communityAverage(community, definition.communityField);
     return {
       id: definition.id,
       label: definition.label,
       value,
       displayValue: definition.format(value),
-      communityValue,
-      communityDisplayValue: definition.format(communityValue),
+      communityValue: null,
+      communityDisplayValue: null,
       unit: definition.unit,
     };
   });
-
   const averageMvp = mean(rows.map((row) => row.mvpRank));
   const participation = mean(rows.map(killParticipation));
   return {
@@ -337,3 +226,52 @@ export function analyzePlayer({ accountId, metadata, community } = {}) {
     },
   };
 }
+
+export function aggregatePlayer({ accountId, metadata } = {}) {
+  return aggregateRows(readMatchRows(metadata, accountId));
+}
+
+export function aggregatePlayerPrefixes({ accountId, metadata, limits = [25, 50, 100, 150, 200] } = {}) {
+  const rows = readMatchRows(metadata, accountId);
+  const samples = {};
+  for (const limit of limits) {
+    if (!Number.isSafeInteger(limit) || limit < 1) continue;
+    samples[String(limit)] = aggregateRows(rows.slice(0, limit));
+  }
+  const availableMatches = asArray(metadata).length;
+  return {
+    maxMatches: availableMatches,
+    samples,
+  };
+}
+
+export function composePlayerWithCommunity(playerAggregate, community) {
+  if (!playerAggregate || typeof playerAggregate !== "object") return null;
+  const metrics = Array.isArray(playerAggregate.metrics)
+    ? playerAggregate.metrics.map((metric) => {
+        const definition = METRIC_DEFINITIONS.find((candidate) => candidate.id === metric?.id);
+        const communityValue = definition ? communityAverage(community, definition.communityField) : null;
+        return {
+          ...metric,
+          communityValue,
+          communityDisplayValue: definition ? definition.format(communityValue) : null,
+        };
+      })
+    : [];
+  return { ...playerAggregate, metrics };
+}
+
+export function composeAnalysis({ player, community } = {}) {
+  return composePlayerWithCommunity(player, community);
+}
+
+export function analyzePlayer({ accountId, metadata, community } = {}) {
+  return composeAnalysis({ player: aggregatePlayer({ accountId, metadata }), community });
+}
+
+export {
+  METRIC_DEFINITIONS,
+  communityAverage,
+  formatNumber,
+  formatPercent,
+};

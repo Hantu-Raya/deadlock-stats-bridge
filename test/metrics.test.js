@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { MAX_METADATA_MATCHES, analyzePlayer } from "../src/metrics.js";
+import { MAX_METADATA_MATCHES, aggregatePlayerPrefixes, analyzePlayer, composePlayerWithCommunity } from "../src/metrics.js";
 
 function metric(analysis, id) {
   return analysis.metrics.find((entry) => entry.id === id);
@@ -206,4 +206,21 @@ test("analyzePlayer rejects metadata beyond the selected maximum", () => {
     () => analyzePlayer({ accountId: 7, metadata: { data: matches }, community: {} }),
     RangeError,
   );
+});
+
+test("one metadata superset yields identical player-only prefix contracts", () => {
+  const prefixes = aggregatePlayerPrefixes({ accountId: 7, metadata, limits: [50, 100, 150, 200] });
+  assert.equal(prefixes.maxMatches, 2);
+  assert.equal(prefixes.samples["50"].sampleSize, 2);
+  assert.equal(prefixes.samples["100"].sampleSize, 2);
+  assert.equal(prefixes.samples["150"].sampleSize, 2);
+  assert.equal(prefixes.samples["200"].sampleSize, 2);
+  assert.equal(prefixes.samples["50"].metrics[0].communityValue, null);
+});
+
+test("community composition is independent from player prefix aggregation", () => {
+  const prefixes = aggregatePlayerPrefixes({ accountId: 7, metadata, limits: [50] });
+  const composed = composePlayerWithCommunity(prefixes.samples["50"], community);
+  assert.equal(metric(composed, "kd").value, 3);
+  assert.equal(metric(composed, "kd").communityValue, 3.5);
 });

@@ -5,6 +5,8 @@ let hasResults = false;
 let errorVisible = false;
 let loading = false;
 let controlBinding = null;
+let cooldownUntil = 0;
+let cooldownTimer = null;
 
 function getDocument() {
   return typeof document === "undefined" ? null : document;
@@ -335,9 +337,7 @@ function renderRequestFacts(model) {
 
 function appendResponseDetails(container, label, envelope) {
   const doc = getDocument();
-  if (!doc || !container) {
-    return;
-  }
+  if (!doc || !container) return;
   const details = doc.createElement("details");
   details.className = "response-detail";
   const summary = doc.createElement("summary");
@@ -384,10 +384,25 @@ function appendResponseDetails(container, label, envelope) {
   rawTitle.className = "response-subheading";
   rawTitle.textContent = "Raw JSON";
   content.append(rawTitle);
-  const raw = doc.createElement("pre");
-  raw.className = "raw-json";
-  raw.textContent = safeJson(envelope.data);
-  content.append(raw);
+  const rawContainer = doc.createElement("div");
+  rawContainer.className = "raw-json-container";
+  const rawHint = doc.createElement("p");
+  rawHint.className = "response-status";
+  rawHint.textContent = envelope.rawRetained
+    ? "Open this section to materialize the raw response."
+    : "Raw body was not retained in compact cache. Refresh to retrieve it.";
+  rawContainer.append(rawHint);
+  content.append(rawContainer);
+  let materialized = false;
+  details.addEventListener?.("toggle", () => {
+    if (!details.open || materialized) return;
+    materialized = true;
+    if (!envelope.rawRetained) return;
+    const raw = doc.createElement("pre");
+    raw.className = "raw-json";
+    raw.textContent = safeJson(envelope.data);
+    rawContainer.replaceChildren(raw);
+  });
 
   details.append(content);
   container.append(details);
@@ -417,12 +432,13 @@ function syncVisibility() {
 function syncButtons() {
   const lookup = getElement("lookup");
   const refresh = getElement("refresh");
+  const cooldownActive = cooldownUntil > Date.now();
   if (lookup) {
-    lookup.disabled = loading;
+    lookup.disabled = loading || cooldownActive;
     lookup.setAttribute("aria-busy", String(loading));
   }
   if (refresh) {
-    refresh.disabled = loading || !hasResults;
+    refresh.disabled = loading || cooldownActive || !hasResults;
     refresh.setAttribute("aria-busy", String(loading));
   }
 }
@@ -508,6 +524,25 @@ export function writeControls({ accountId, limit } = {}) {
   if (limitInput && ALLOWED_LIMITS.has(Number(limit))) {
     limitInput.value = String(Number(limit));
   }
+}
+
+export function setCooldown(milliseconds = 0) {
+  const duration = Number.isFinite(Number(milliseconds)) ? Math.max(0, Number(milliseconds)) : 0;
+  const nextUntil = duration > 0 ? Date.now() + duration : 0;
+  if (duration > 0 && cooldownUntil > nextUntil) return;
+  cooldownUntil = nextUntil;
+  if (cooldownTimer !== null) {
+    clearTimeout(cooldownTimer);
+    cooldownTimer = null;
+  }
+  if (duration > 0) {
+    cooldownTimer = setTimeout(() => {
+      cooldownUntil = 0;
+      cooldownTimer = null;
+      syncButtons();
+    }, Math.max(0, cooldownUntil - Date.now()) + 10);
+  }
+  syncButtons();
 }
 
 export function setLoading(isLoading) {
