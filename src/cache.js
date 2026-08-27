@@ -1,5 +1,7 @@
-const PLAYER_CACHE_PREFIX = "deadlock-stats-player:v1:";
-const COMMUNITY_CACHE_PREFIX = "deadlock-stats-community:v2:";
+import { hasExactAnalysisMetricSet } from "./metrics.js?v=20260827-1";
+
+const PLAYER_CACHE_PREFIX = "deadlock-stats-player:v2:";
+const COMMUNITY_CACHE_PREFIX = "deadlock-stats-community:v3:";
 const RATE_CACHE_PREFIX = "deadlock-stats-rate:v1:";
 const RATE_BLOCK_PREFIX = "deadlock-stats-rate-block:v1:";
 const OWNER_PREFIX = "deadlock-stats-owner:v1:";
@@ -24,6 +26,8 @@ const LEGACY_PREFIXES = [
   "deadlock-stats-compat:v1:",
   "deadlock-stats-bridge:v2:",
   "deadlock-stats-community:v1:",
+  "deadlock-stats-player:v1:",
+  "deadlock-stats-community:v2:",
 ];
 
 export const FRESH_TTL_MS = 10 * 60 * 1000;
@@ -277,10 +281,12 @@ function compactMetric(metric) {
 function compactAnalysis(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const analysis = value.analysis && typeof value.analysis === "object" ? value.analysis : value;
+  const metrics = Array.isArray(analysis.metrics) ? analysis.metrics.map(compactMetric).filter(Boolean) : [];
+  if (!hasExactAnalysisMetricSet(metrics)) return null;
   const compact = {
     sampleSize: analysis.sampleSize,
     totalDurationSeconds: analysis.totalDurationSeconds,
-    metrics: Array.isArray(analysis.metrics) ? analysis.metrics.map(compactMetric).filter(Boolean) : [],
+    metrics,
     supplemental: analysis.supplemental && typeof analysis.supplemental === "object" ? analysis.supplemental : {},
   };
   if (!Number.isSafeInteger(compact.sampleSize) || compact.sampleSize < 0) return null;
@@ -357,6 +363,17 @@ function compactCommunityValue(value, mode, scope, now) {
   };
 }
 
+function validPlayerSamples(value) {
+  const samples = value?.samples;
+  return Boolean(
+    samples &&
+    typeof samples === "object" &&
+    !Array.isArray(samples) &&
+    Object.keys(samples).length > 0 &&
+    Object.values(samples).every((sample) => hasExactAnalysisMetricSet(sample?.metrics)),
+  );
+}
+
 function readResource(storage, key, now, freshTtl, expected) {
   if (!storage || typeof storage.getItem !== "function") return null;
   const entry = readRaw(storage, key);
@@ -380,7 +397,7 @@ function readResource(storage, key, now, freshTtl, expected) {
 export function readPlayerCache(storage, accountId, mode = "ranked", now = defaultNow()) {
   if (!validAccount(accountId) || !validMode(mode)) return null;
   const result = readResource(storage, playerCacheKey(accountId, mode), now, FRESH_TTL_MS, "player");
-  if (!result || result.value?.accountId !== accountId || result.value?.mode !== mode) return null;
+  if (!result || result.value?.accountId !== accountId || result.value?.mode !== mode || !validPlayerSamples(result.value)) return null;
   return result;
 }
 

@@ -1,4 +1,4 @@
-import { ApiError, fetchCommunity, fetchMetadata } from "./api.js";
+import { ApiError, fetchCommunity, fetchMetadata } from "./api.js?v=20260827-1";
 import {
   FRESH_TTL_MS,
   clearExpiredResults,
@@ -9,9 +9,9 @@ import {
   withResourceOwnership,
   writeCommunityCache,
   writePlayerCache,
-} from "./cache.js?v=20260825-3";
-import { aggregatePlayerPrefixes, composePlayerWithCommunity } from "./metrics.js?v=20260825-3";
-import { DEFAULT_MATCHES, DEFAULT_MODE, DEFAULT_PROTOCOL, buildErrorTitle, buildSuccessTitle, parseBridgeQuery, TITLE_MAX_LENGTH } from "./title-protocol.js?v=20260825-3";
+} from "./cache.js?v=20260827-1";
+import { aggregatePlayerPrefixes, composePlayerWithCommunity, hasExactAnalysisMetricSet } from "./metrics.js?v=20260827-1";
+import { DEFAULT_MATCHES, DEFAULT_MODE, DEFAULT_PROTOCOL, buildErrorTitle, buildSuccessTitle, parseBridgeQuery, TITLE_MAX_LENGTH } from "./title-protocol.js?v=20260827-1";
 
 const ERROR_MESSAGES = Object.freeze({
   invalid_query: "Invalid bridge request.",
@@ -40,8 +40,8 @@ function waitMs(milliseconds) { return new Promise((resolve) => setTimeout(resol
 function isAbortError(error, signal) { return signal?.aborted === true || error?.name === "AbortError"; }
 
 function genericError(error) {
-  if (error instanceof ApiError && error.code === "payload_too_large") return { code: "payload_too_large", status: null, retryAfter: null };
-  if (error instanceof ApiError) {
+  if ((error instanceof ApiError || error?.name === "ApiError") && error.code === "payload_too_large") return { code: "payload_too_large", status: null, retryAfter: null };
+  if ((error instanceof ApiError || error?.name === "ApiError")) {
     const status = Number.isInteger(error.status) && error.status > 0 ? error.status : null;
     if (status === 429) return { code: "rate_limit", status, retryAfter: error.retryAfter };
     return { code: status === null ? "network_error" : "upstream_error", status, retryAfter: error.retryAfter };
@@ -102,8 +102,7 @@ function validAnalysis(value) {
     typeof value === "object" &&
     Number.isSafeInteger(value.sampleSize) &&
     value.sampleSize >= 0 &&
-    Array.isArray(value.metrics) &&
-    value.metrics.length >= 12,
+    hasExactAnalysisMetricSet(value.metrics),
   );
 }
 
@@ -165,7 +164,7 @@ async function resolveCommunityResource(deps, query, now) {
               signal: deps.signal,
             });
           } catch (error) {
-            if (error instanceof ApiError) {
+            if ((error instanceof ApiError || error?.name === "ApiError")) {
               try { deps.updateRate(deps.storage, COMMUNITY_RATE_FAMILY, error.headers, { now: clockValue(deps.now), status: error.status }); } catch { /* optional */ }
             }
             throw error;
@@ -243,7 +242,7 @@ export async function runBridge(options = {}) {
           try {
             metadata = await deps.fetchMetadata({ accountId: query.account, limit: 150, mode: query.mode, signal: deps.signal, fetchImpl: deps.fetchImpl });
           } catch (error) {
-            if (error instanceof ApiError) {
+            if ((error instanceof ApiError || error?.name === "ApiError")) {
               try { deps.updateRate(deps.storage, PLAYER_RATE_FAMILY, error.headers, { now: clockValue(deps.now), status: error.status }); } catch { /* optional */ }
             }
             throw error;

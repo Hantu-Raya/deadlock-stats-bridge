@@ -17,6 +17,7 @@ import {
   writeCommunityCache,
   writePlayerCache,
 } from "../src/cache.js";
+import { ANALYSIS_METRIC_IDS } from "../src/metrics.js";
 
 class MemoryStorage {
   #values = new Map();
@@ -42,7 +43,15 @@ function sample(size = 1) {
   return {
     sampleSize: size,
     totalDurationSeconds: size * 600,
-    metrics: [{ id: "kd", value: 2, displayValue: "2.00", communityValue: null, communityDisplayValue: null, unit: "ratio" }],
+    metrics: ANALYSIS_METRIC_IDS.map((id) => ({
+      id,
+      value: 2,
+      displayValue: "2.00",
+      communityValue: null,
+      communityDisplayValue: null,
+      percentile: null,
+      unit: "ratio",
+    })),
     supplemental: { averageMvp: { value: 2, displayValue: "2.00", unit: "rank" } },
   };
 }
@@ -79,7 +88,7 @@ test("player cache stores one account/mode superset and reuses prefix samples", 
   assert.equal(readPlayerCache(storage, 50, "standard", now + 1), null);
   assert.equal(readPlayerCache(storage, 51, "ranked", now + 1), null);
 
-  const raw = JSON.parse(storage.getItem("deadlock-stats-player:v1:50:ranked"));
+  const raw = JSON.parse(storage.getItem("deadlock-stats-player:v2:50:ranked"));
   assert.equal(raw.kind, "player");
   assert.equal(Object.hasOwn(raw, "metadata"), false);
 });
@@ -92,7 +101,7 @@ test("player and community clocks distinguish fresh, stale, expired, and future 
   assert.equal(readPlayerCache(playerStorage, 50, "ranked", now + FRESH_TTL_MS).freshness, "stale");
   assert.equal(readPlayerCache(playerStorage, 50, "ranked", now + STALE_TTL_MS), null);
 
-  const playerKey = "deadlock-stats-player:v1:50:ranked";
+  const playerKey = "deadlock-stats-player:v2:50:ranked";
   playerStorage.setItem(playerKey, JSON.stringify({
     kind: "player",
     accountId: 50,
@@ -126,7 +135,7 @@ test("player and community clocks distinguish fresh, stale, expired, and future 
   assert.equal(readCommunityCache(communityStorage, "ranked", "all", now + COMMUNITY_FRESH_TTL_MS).freshness, "stale");
   assert.equal(readCommunityCache(communityStorage, "ranked", "all", now + STALE_TTL_MS), null);
 
-  const communityKey = "deadlock-stats-community:v2:ranked:all";
+  const communityKey = "deadlock-stats-community:v3:ranked:all";
   communityStorage.setItem(communityKey, JSON.stringify({
     kind: "community",
     mode: "ranked",
@@ -161,7 +170,7 @@ test("community cache is independent by mode and requested match scope", () => {
   assert.equal(writeCommunityCache(storage, "ranked", "50", { metrics: { kills: { avg: 3 } } }, now), true);
   assert.equal(writeCommunityCache(storage, "standard", "all", { metrics: { kills: { avg: 2 } } }, now), true);
 
-  const raw = JSON.parse(storage.getItem("deadlock-stats-community:v2:ranked:all"));
+  const raw = JSON.parse(storage.getItem("deadlock-stats-community:v3:ranked:all"));
   assert.deepEqual(raw.metrics.kills, {
     avg: 4,
     percentile1: 0,
@@ -193,7 +202,7 @@ test("serialized storage bounds evict the oldest entries before a write", () => 
   const storage = new MemoryStorage();
   const now = 4_500_000;
   const padding = "x".repeat(Math.ceil(MAX_CACHE_SERIALIZED_BYTES / 3));
-  const oldKeys = [1, 2, 3].map((accountId) => `deadlock-stats-player:v1:${accountId}:ranked`);
+  const oldKeys = [1, 2, 3].map((accountId) => `deadlock-stats-player:v2:${accountId}:ranked`);
   oldKeys.forEach((key, index) => {
     storage.setItem(key, JSON.stringify({
       kind: "player",
@@ -206,7 +215,7 @@ test("serialized storage bounds evict the oldest entries before a write", () => 
     }));
   });
 
-  const newKey = "deadlock-stats-player:v1:999:ranked";
+  const newKey = "deadlock-stats-player:v2:999:ranked";
   assert.equal(writePlayerCache(storage, 999, "ranked", playerValue(now, 25, 999), now), true);
   assert.equal(storage.getItem(oldKeys[0]), null);
   assert.notEqual(storage.getItem(oldKeys[1]), null);
@@ -229,9 +238,9 @@ test("quota failure evicts oldest valid entries and retries once within the boun
     writePlayerCache(storage, 999, "ranked", playerValue(now + 1000, 25, 999), now + 1000),
     true,
   );
-  assert.equal(storage.getItem("deadlock-stats-player:v1:1:ranked"), null);
-  assert.equal(storage.getItem("deadlock-stats-player:v1:2:ranked"), null);
-  assert.notEqual(storage.getItem("deadlock-stats-player:v1:999:ranked"), null);
+  assert.equal(storage.getItem("deadlock-stats-player:v2:1:ranked"), null);
+  assert.equal(storage.getItem("deadlock-stats-player:v2:2:ranked"), null);
+  assert.notEqual(storage.getItem("deadlock-stats-player:v2:999:ranked"), null);
   assert.equal(storage.length, MAX_CACHE_ENTRIES - 1);
 });
 
@@ -245,6 +254,8 @@ test("legacy namespaces are purged and bounded writes clean expired entries", ()
     "deadlock-stats-compat:v1:old",
     "deadlock-stats-bridge:v2:old",
     "deadlock-stats-community:v1:old",
+    "deadlock-stats-player:v1:old",
+    "deadlock-stats-community:v2:old",
   ];
   for (const key of legacyKeys) storage.setItem(key, "x");
   storage.setItem("unrelated-storage", "keep");
@@ -277,7 +288,7 @@ test("legacy namespaces are purged and bounded writes clean expired entries", ()
   assert.equal(storage.getItem("deadlock-stats-player:v1:50:ranked"), null);
   assert.equal(storage.getItem("deadlock-stats-player:v1:51:ranked"), null);
   assert.equal(storage.getItem("deadlock-stats-rate:v1:malformed"), null);
-  assert.notEqual(storage.getItem("deadlock-stats-community:v2:standard:all"), null);
+  assert.notEqual(storage.getItem("deadlock-stats-community:v3:standard:all"), null);
 });
 
 test("rate headers persist cooldown state and expose remaining reset time", () => {

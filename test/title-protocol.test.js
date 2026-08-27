@@ -10,6 +10,7 @@ import {
   LEGACY_BRIDGE_VERSION,
   TITLE_MAX_LENGTH,
   TITLE_PREFIX,
+  V3_BRIDGE_VERSION,
   buildErrorPayload,
   buildErrorTitle,
   buildSuccessPayload,
@@ -24,15 +25,22 @@ const METRIC_IDS = [
   "kd",
   "kda",
   "average-kills",
-  "average-assists",
   "average-deaths",
-  "damage-taken-per-minute",
+  "average-assists",
+  "net-worth-per-minute",
   "player-damage-per-minute",
+  "damage-taken-per-minute",
   "accuracy",
   "critical-hit-rate",
-  "net-worth-per-minute",
   "boss-damage-per-minute",
   "healing-per-minute",
+  "kills-plus-assists",
+  "player-damage-per-health",
+  "average-last-hits",
+  "average-denies",
+  "self-healing-per-minute",
+  "player-healing-per-minute",
+  "heal-prevented",
 ];
 
 function analysis(values = {}) {
@@ -64,7 +72,7 @@ test("bridge query requires exactly one valid account, count, mode, and nonce", 
   }
   assert.equal(parseBridgeQuery("?account_id=123&matches=50&mode=ranked&request=req_01&protocol=3").protocol, 3);
   assert.equal(parseBridgeQuery("?account_id=123&matches=50&mode=ranked&request=req_01&protocol=2").protocol, 2);
-  assert.equal(parseBridgeQuery("?account_id=123&matches=50&mode=ranked&request=req_01&protocol=4").ok, false);
+  assert.equal(parseBridgeQuery("?account_id=123&matches=50&mode=ranked&request=req_01&protocol=4").protocol, 4);
 
   assert.equal(parseBridgeQuery("?account_id=0&matches=50&mode=ranked&request=req_01").ok, false);
   assert.equal(parseBridgeQuery("?account_id=123&matches=25&mode=ranked&request=req_01").ok, false);
@@ -113,7 +121,6 @@ test("success payload keeps the six groups and static metric order", () => {
     "healing_per_minute",
   ]);
 });
-
 test("protocol 3 moves boss damage and serializes exact percentile metric keys", () => {
   const payload = buildSuccessPayload({
     request: "req_01",
@@ -123,10 +130,10 @@ test("protocol 3 moves boss damage and serializes exact percentile metric keys",
     sample: 7,
     generated: "2026-08-25T00:00:00.000Z",
     analysis: analysis(),
-    protocol: BRIDGE_VERSION,
+    protocol: V3_BRIDGE_VERSION,
   });
 
-  assert.equal(payload.v, BRIDGE_VERSION);
+  assert.equal(payload.v, V3_BRIDGE_VERSION);
   assert.deepEqual(payload.groups.flatMap((group) => group.metrics.map((metric) => metric.id)), [
     "kd",
     "kda",
@@ -153,6 +160,76 @@ test("protocol 3 moves boss damage and serializes exact percentile metric keys",
       metrics: group.metrics.map((metric) => ({ ...metric, percentile: 101 })),
     })),
   }), false);
+});
+
+test("protocol 4 emits strict tuples in the contracted group order", () => {
+  const payload = buildSuccessPayload({
+    request: "req_01",
+    account: 123,
+    matches: DEFAULT_MATCHES,
+    mode: "ranked",
+    sample: 7,
+    generated: "2026-08-25T00:00:00.000Z",
+    analysis: analysis(),
+    protocol: BRIDGE_VERSION,
+  });
+
+  assert.equal(payload.v, BRIDGE_VERSION);
+  assert.deepEqual(payload.groups.map((group) => group.id), [
+    "performance",
+    "scoreboard",
+    "accuracy_kd",
+    "damage",
+    "economy",
+    "healing",
+  ]);
+  assert.deepEqual(payload.groups.flatMap((group) => group.metrics.map(([id]) => id)), [
+    "kda",
+    "kills_plus_assists",
+    "player_damage_per_health",
+    "average_kills",
+    "average_deaths",
+    "average_assists",
+    "accuracy",
+    "critical_hit_rate",
+    "kd",
+    "player_damage_per_minute",
+    "damage_taken_per_minute",
+    "objective_damage_per_minute",
+    "net_worth_per_minute",
+    "average_last_hits",
+    "average_denies",
+    "self_healing_per_minute",
+    "player_healing_per_minute",
+    "heal_prevented",
+  ]);
+  assert.ok(payload.groups.every((group) => group.metrics.every((metric) => metric.length === 4)));
+  assert.equal(validateBridgePayload(payload), true);
+  assert.equal(validateBridgePayload({
+    ...payload,
+    groups: payload.groups.map((group, groupIndex) => ({
+      ...group,
+      metrics: group.metrics.map((metric, metricIndex) => (
+        groupIndex === 0 && metricIndex === 0
+          ? { id: metric[0], player: metric[1], community: metric[2], percentile: metric[3] }
+          : metric
+      )),
+    })),
+  }), false);
+});
+
+test("selection rejects missing or unknown analysis metric IDs", () => {
+  const metrics = analysis().metrics;
+  assert.throws(
+    () => selectMetricGroups({ metrics: metrics.slice(1) }),
+    /exact comparison metric set/,
+  );
+  assert.throws(
+    () => selectMetricGroups({
+      metrics: [...metrics.slice(0, -1), { id: "unpublished", value: 1, communityValue: 1 }],
+    }),
+    /exact comparison metric set/,
+  );
 });
 
 test("success and error builders accept each supported count and mode", () => {
@@ -291,10 +368,10 @@ test("protocol 3 errors retain requested version", () => {
     matches: DEFAULT_MATCHES,
     mode: "ranked",
     code: "invalid_payload",
-    protocol: BRIDGE_VERSION,
+    protocol: V3_BRIDGE_VERSION,
   });
-  assert.equal(payload.v, BRIDGE_VERSION);
-  assert.equal(parseBridgeTitle(buildErrorTitle({ ...payload, protocol: BRIDGE_VERSION })).payload.v, BRIDGE_VERSION);
+  assert.equal(payload.v, V3_BRIDGE_VERSION);
+  assert.equal(parseBridgeTitle(buildErrorTitle({ ...payload, protocol: V3_BRIDGE_VERSION })).payload.v, V3_BRIDGE_VERSION);
 });
 
 test("title parsing rejects malformed success identity and error modes", () => {

@@ -1,10 +1,14 @@
+import { ANALYSIS_METRIC_IDS, hasExactAnalysisMetricSet } from "./metrics.js?v=20260827-1";
+
 const TITLE_PREFIX = "DLSTATS2:";
 const TITLE_MAX_LENGTH = 2048;
 const BRIDGE_TITLE = "Deadlock Stats Bridge";
 const LEGACY_BRIDGE_VERSION = 2;
-const BRIDGE_VERSION = 3;
+const V3_BRIDGE_VERSION = 3;
+const BRIDGE_VERSION = 4;
+const PANORAMA_BRIDGE_VERSION = BRIDGE_VERSION;
 const DEFAULT_PROTOCOL = LEGACY_BRIDGE_VERSION;
-const SUPPORTED_PROTOCOLS = Object.freeze([LEGACY_BRIDGE_VERSION, BRIDGE_VERSION]);
+const SUPPORTED_PROTOCOLS = Object.freeze([LEGACY_BRIDGE_VERSION, V3_BRIDGE_VERSION, BRIDGE_VERSION]);
 const ALLOWED_MATCHES = Object.freeze([50, 100, 150]);
 const ALLOWED_MODES = Object.freeze(["ranked", "standard"]);
 const DEFAULT_MATCHES = 50;
@@ -62,7 +66,7 @@ const LEGACY_METRIC_GROUPS = Object.freeze([
   }),
 ]);
 
-const METRIC_GROUPS = Object.freeze([
+const V3_METRIC_GROUPS = Object.freeze([
   LEGACY_METRIC_GROUPS[0],
   LEGACY_METRIC_GROUPS[1],
   LEGACY_METRIC_GROUPS[2],
@@ -84,10 +88,59 @@ const METRIC_GROUPS = Object.freeze([
   LEGACY_METRIC_GROUPS[5],
 ]);
 
-const METRIC_SOURCES = Object.freeze(
-  METRIC_GROUPS.flatMap((group) => group.metrics.map((metric) => metric.source)),
-);
+const V4_METRIC_GROUPS = Object.freeze([
+  Object.freeze({
+    id: "performance",
+    metrics: Object.freeze([
+      Object.freeze({ id: "kda", source: "kda" }),
+      Object.freeze({ id: "kills_plus_assists", source: "kills-plus-assists" }),
+      Object.freeze({ id: "player_damage_per_health", source: "player-damage-per-health" }),
+    ]),
+  }),
+  Object.freeze({
+    id: "scoreboard",
+    metrics: Object.freeze([
+      Object.freeze({ id: "average_kills", source: "average-kills" }),
+      Object.freeze({ id: "average_deaths", source: "average-deaths" }),
+      Object.freeze({ id: "average_assists", source: "average-assists" }),
+    ]),
+  }),
+  Object.freeze({
+    id: "accuracy_kd",
+    metrics: Object.freeze([
+      Object.freeze({ id: "accuracy", source: "accuracy" }),
+      Object.freeze({ id: "critical_hit_rate", source: "critical-hit-rate" }),
+      Object.freeze({ id: "kd", source: "kd" }),
+    ]),
+  }),
+  Object.freeze({
+    id: "damage",
+    metrics: Object.freeze([
+      Object.freeze({ id: "player_damage_per_minute", source: "player-damage-per-minute" }),
+      Object.freeze({ id: "damage_taken_per_minute", source: "damage-taken-per-minute" }),
+      Object.freeze({ id: "objective_damage_per_minute", source: "boss-damage-per-minute" }),
+    ]),
+  }),
+  Object.freeze({
+    id: "economy",
+    metrics: Object.freeze([
+      Object.freeze({ id: "net_worth_per_minute", source: "net-worth-per-minute" }),
+      Object.freeze({ id: "average_last_hits", source: "average-last-hits" }),
+      Object.freeze({ id: "average_denies", source: "average-denies" }),
+    ]),
+  }),
+  Object.freeze({
+    id: "healing",
+    metrics: Object.freeze([
+      Object.freeze({ id: "self_healing_per_minute", source: "self-healing-per-minute" }),
+      Object.freeze({ id: "player_healing_per_minute", source: "player-healing-per-minute" }),
+      Object.freeze({ id: "heal_prevented", source: "heal-prevented" }),
+    ]),
+  }),
+]);
 
+const METRIC_GROUPS = V4_METRIC_GROUPS;
+const METRIC_SOURCES = Object.freeze([...ANALYSIS_METRIC_IDS]);
 const GROUP_IDS = Object.freeze(METRIC_GROUPS.map((group) => group.id));
 const ERROR_CODES = Object.freeze([
   "invalid_query",
@@ -223,22 +276,19 @@ function percentileValue(metric) {
 }
 
 function metricGroupsForProtocol(protocol) {
-  return protocol === BRIDGE_VERSION ? METRIC_GROUPS : LEGACY_METRIC_GROUPS;
+  if (protocol === BRIDGE_VERSION) return V4_METRIC_GROUPS;
+  return protocol === V3_BRIDGE_VERSION ? V3_METRIC_GROUPS : LEGACY_METRIC_GROUPS;
 }
 
 export function selectMetricGroups(analysis, protocol = DEFAULT_PROTOCOL) {
   const selectedProtocol = assertProtocol(protocol);
   const metrics = Array.isArray(analysis?.metrics) ? analysis.metrics : [];
-  if (metrics.length !== METRIC_SOURCES.length) {
-    throw new TypeError("analysis must contain every comparison metric");
+  if (!hasExactAnalysisMetricSet(metrics)) {
+    throw new TypeError("analysis must contain the exact comparison metric set");
   }
   const byId = new Map();
   for (const metric of metrics) {
-    if (
-      !isPlainObject(metric) ||
-      !METRIC_SOURCES.includes(metric.id) ||
-      byId.has(metric.id)
-    ) {
+    if (!METRIC_SOURCES.includes(metric.id) || byId.has(metric.id)) {
       throw new TypeError("analysis metric IDs must be exact and unique");
     }
     byId.set(metric.id, metric);
@@ -247,12 +297,13 @@ export function selectMetricGroups(analysis, protocol = DEFAULT_PROTOCOL) {
     id: group.id,
     metrics: group.metrics.map((definition) => {
       const metric = byId.get(definition.source);
-      const result = {
-        id: definition.id,
-        player: metricValue(metric, "value"),
-        community: metricValue(metric, "communityValue"),
-      };
-      if (selectedProtocol === BRIDGE_VERSION) result.percentile = percentileValue(metric);
+      const player = metricValue(metric, "value");
+      const community = metricValue(metric, "communityValue");
+      if (selectedProtocol === BRIDGE_VERSION) {
+        return [definition.id, player, community, percentileValue(metric)];
+      }
+      const result = { id: definition.id, player, community };
+      if (selectedProtocol === V3_BRIDGE_VERSION) result.percentile = percentileValue(metric);
       return result;
     }),
   }));
@@ -286,7 +337,7 @@ function assertMode(value) {
 
 function assertProtocol(value) {
   const protocol = normalizeProtocol(value);
-  if (protocol === null) throw new TypeError("protocol must be 2 or 3");
+  if (protocol === null) throw new TypeError("protocol must be 2, 3, or 4");
   return protocol;
 }
 
@@ -426,7 +477,8 @@ function validMetricPercentile(value) {
 
 function validateGroups(groups, protocol) {
   const definitions = metricGroupsForProtocol(protocol);
-  const hasPercentile = protocol === BRIDGE_VERSION;
+  const tupleSchema = protocol === BRIDGE_VERSION;
+  const hasPercentile = protocol !== LEGACY_BRIDGE_VERSION;
   if (!Array.isArray(groups) || groups.length !== definitions.length) return false;
   return groups.every((group, groupIndex) => {
     const definition = definitions[groupIndex];
@@ -434,6 +486,16 @@ function validateGroups(groups, protocol) {
     if (!Array.isArray(group.metrics) || group.metrics.length !== definition.metrics.length) return false;
     return group.metrics.every((metric, metricIndex) => {
       const expected = definition.metrics[metricIndex];
+      if (tupleSchema) {
+        return (
+          Array.isArray(metric) &&
+          metric.length === 4 &&
+          metric[0] === expected.id &&
+          validMetricValue(metric[1]) &&
+          validMetricValue(metric[2]) &&
+          validMetricPercentile(metric[3])
+        );
+      }
       const required = hasPercentile
         ? ["id", "player", "community", "percentile"]
         : ["id", "player", "community"];
@@ -524,6 +586,7 @@ export function parseBridgeTitle(title) {
 export {
   ALLOWED_MATCHES,
   ALLOWED_MODES,
+  ANALYSIS_METRIC_IDS,
   BRIDGE_TITLE,
   BRIDGE_VERSION,
   DEFAULT_MATCHES,
@@ -533,8 +596,12 @@ export {
   GROUP_IDS,
   LEGACY_BRIDGE_VERSION,
   METRIC_GROUPS,
+  PANORAMA_BRIDGE_VERSION,
   REQUEST_MAX_LENGTH,
   SUPPORTED_PROTOCOLS,
   TITLE_MAX_LENGTH,
   TITLE_PREFIX,
+  V3_BRIDGE_VERSION,
+  V3_METRIC_GROUPS,
+  V4_METRIC_GROUPS,
 };

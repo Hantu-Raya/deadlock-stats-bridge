@@ -1,4 +1,4 @@
-import { ApiError, fetchCommunity, fetchMetadata } from "./api.js";
+import { ApiError, fetchCommunity, fetchMetadata } from "./api.js?v=20260827-1";
 import {
   COMMUNITY_FRESH_TTL_MS,
   FRESH_TTL_MS,
@@ -11,8 +11,8 @@ import {
   withResourceOwnership,
   writeCommunityCache,
   writePlayerCache,
-} from "./cache.js";
-import { aggregatePlayerPrefixes, composePlayerWithCommunity } from "./metrics.js";
+} from "./cache.js?v=20260827-1";
+import { aggregatePlayerPrefixes, composePlayerWithCommunity } from "./metrics.js?v=20260827-1";
 import { bindExplorerControls, readControls, renderEmpty, renderError, renderExplorer, setCooldown, setLoading, writeControls } from "./ui.js";
 
 export const SAMPLE_LIMITS = Object.freeze([25, 50, 100, 200]);
@@ -127,7 +127,7 @@ function makeCooldownError(family, state, now) {
 }
 
 function makeErrorModel(error, { stale = false, preserveData = false, accountId = null, limit = null } = {}) {
-  const isApiError = error instanceof ApiError;
+  const isApiError = (error instanceof ApiError || error?.name === "ApiError");
   const status = Number.isInteger(error?.status) && error.status > 0 ? error.status : null;
   const detail = typeof error?.detail === "string" ? error.detail : null;
   const baseMessage = typeof error?.message === "string" && error.message ? error.message : "The Deadlock API request failed.";
@@ -227,7 +227,7 @@ export function createExplorerApp(overrides = {}) {
       recordResponse(PLAYER_RATE_FAMILY, metadata, nowValue(deps.now));
       return { metadata, fetchedAt: safeIso(nowValue(deps.now)) };
     } catch (error) {
-      if (error instanceof ApiError) recordResponse(PLAYER_RATE_FAMILY, { headers: error.headers, status: error.status }, nowValue(deps.now));
+      if ((error instanceof ApiError || error?.name === "ApiError")) recordResponse(PLAYER_RATE_FAMILY, { headers: error.headers, status: error.status }, nowValue(deps.now));
       throw error;
     }
   }
@@ -244,7 +244,7 @@ export function createExplorerApp(overrides = {}) {
       recordResponse(COMMUNITY_RATE_FAMILY, envelope, nowValue(deps.now));
       return envelope;
     } catch (error) {
-      if (error instanceof ApiError) recordResponse(COMMUNITY_RATE_FAMILY, { headers: error.headers, status: error.status }, nowValue(deps.now));
+      if ((error instanceof ApiError || error?.name === "ApiError")) recordResponse(COMMUNITY_RATE_FAMILY, { headers: error.headers, status: error.status }, nowValue(deps.now));
       throw error;
     }
   }

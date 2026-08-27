@@ -26,7 +26,7 @@ test("buildMetadataUrl requests direct player columns for each supported sample"
       assert.equal(url.searchParams.get("extra_match_columns"), "duration_s");
       assert.equal(url.searchParams.get("include_player_kda"), "true");
       assert.equal(url.searchParams.get("include_player_final_stats"), "true");
-      assert.equal(url.searchParams.get("extra_player_columns"), "mvp_rank");
+      assert.equal(url.searchParams.get("extra_player_columns"), "last_hits,denies,mvp_rank");
       assert.equal(url.searchParams.get("format"), "json");
     }
   }

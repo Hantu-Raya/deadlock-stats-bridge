@@ -2,9 +2,9 @@ const API_ORIGIN = "https://api.deadlock-api.com";
 const METADATA_PATH = "/v1/matches/metadata";
 const METRICS_PATH = "/v1/analytics/player-stats/metrics";
 
-// Keep final stats until the direct-column equivalence gate is proven. The
-// safe payload reduction is include_info=false plus duration_s and mvp_rank.
-const EXTRA_PLAYER_COLUMNS = ["mvp_rank"];
+// Keep final stats for combat/healing metrics and request direct scoreboard
+// columns for fields that are not included in the final-stats payload.
+const EXTRA_PLAYER_COLUMNS = ["last_hits", "denies", "mvp_rank"];
 export const MAX_RESPONSE_BYTES = 16 * 1024 * 1024;
 const API_MATCH_MODES = Object.freeze({
   ranked: "ranked",

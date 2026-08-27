@@ -14,12 +14,19 @@ const community = {
     assists: { avg: 13.25 },
     kd: { avg: 3.5 },
     kda: { avg: 4.75 },
+    kills_plus_assists: { avg: 10 },
+    player_damage_per_health: { avg: 2 },
     net_worth_per_min: { avg: 1000 },
     player_damage_per_min: { avg: 900 },
     player_damage_taken_per_min: { avg: 800 },
     accuracy: { avg: 0.52 },
     crit_shot_rate: { avg: 0.14 },
     boss_damage_per_min: { avg: 200 },
+    last_hits: { avg: 30 },
+    denies: { avg: 4 },
+    self_healing_per_min: { avg: 5 },
+    player_healing_per_min: { avg: 15 },
+    heal_prevented: { avg: 40 },
     healing_per_min: { avg: 300 },
   },
 };
@@ -36,10 +43,13 @@ const metadata = {
           kills: 10,
           deaths: 2,
           assists: 4,
+          last_hits: 20,
+          denies: 3,
           net_worth: 600,
           mvp_rank: 2,
           final_stats: {
             max_player_damage: 3000,
+            max_max_health: 1000,
             max_player_damage_taken: 1000,
             max_boss_damage: 50,
             max_self_healing: 100,
@@ -48,6 +58,7 @@ const metadata = {
             max_shots_missed: 50,
             max_hero_bullets_hit_crit: 10,
             max_hero_bullets_hit: 90,
+            max_heal_prevented: 30,
           },
         },
         { account_id: 8, team: 0, kills: 5, deaths: 4, assists: 1 },
@@ -64,10 +75,13 @@ const metadata = {
           kills: 4,
           deaths: 4,
           assists: 2,
+          last_hits: 40,
+          denies: 5,
           net_worth: 600,
           mvp_rank: 4,
           final_stats: {
             max_player_damage: 2000,
+            max_max_health: 2000,
             max_player_damage_taken: 2000,
             max_boss_damage: 100,
             max_self_healing: 0,
@@ -76,6 +90,7 @@ const metadata = {
             max_shots_missed: 20,
             max_hero_bullets_hit_crit: 20,
             max_hero_bullets_hit: 80,
+            max_heal_prevented: 50,
           },
         },
         { account_id: 10, team: 0, kills: 6, deaths: 5, assists: 2 },
@@ -107,12 +122,21 @@ test("analyzePlayer compares player values with exact community averages", () =>
 
   assert.equal(metric(analysis, "kda").value, 4.25);
   assert.equal(metric(analysis, "kda").communityValue, 4.75);
+  assert.equal(metric(analysis, "kills-plus-assists").value, 10);
+  assert.equal(metric(analysis, "kills-plus-assists").communityValue, 10);
+  assert.equal(metric(analysis, "player-damage-per-health").value, 2);
+  assert.equal(metric(analysis, "player-damage-per-health").communityValue, 2);
   assert.equal(metric(analysis, "average-kills").value, 7);
   assert.equal(metric(analysis, "average-kills").communityValue, 7.25);
   assert.equal(metric(analysis, "net-worth-per-minute").value, 45);
   assert.equal(metric(analysis, "net-worth-per-minute").communityValue, 1000);
   assert.equal(metric(analysis, "player-damage-per-minute").value, 200);
   assert.equal(metric(analysis, "damage-taken-per-minute").value, 100);
+  assert.equal(metric(analysis, "average-last-hits").value, 30);
+  assert.equal(metric(analysis, "average-denies").value, 4);
+  assert.equal(metric(analysis, "self-healing-per-minute").value, 5);
+  assert.equal(metric(analysis, "player-healing-per-minute").value, 15);
+  assert.equal(metric(analysis, "heal-prevented").value, 40);
   assert.equal(metric(analysis, "accuracy").value, 0.65);
   assert.equal(metric(analysis, "accuracy").communityDisplayValue, "52.0%");
   assert.ok(Math.abs(metric(analysis, "critical-hit-rate").value - 0.15) < 1e-12);
@@ -241,7 +265,7 @@ function quantiles(avg = 5) {
   };
 }
 
-test("composed percentiles interpolate boundaries and invert lower-is-better metrics", () => {
+test("composed percentiles interpolate boundaries and invert only lower-is-better metrics", () => {
   const composed = composePlayerWithCommunity({
     sampleSize: 1,
     metrics: [
@@ -259,7 +283,7 @@ test("composed percentiles interpolate boundaries and invert lower-is-better met
 
   assert.equal(metric(composed, "kd").percentile, 1);
   assert.equal(metric(composed, "average-deaths").percentile, 99);
-  assert.equal(metric(composed, "damage-taken-per-minute").percentile, 62.5);
+  assert.equal(metric(composed, "damage-taken-per-minute").percentile, 37.5);
 
   const high = composePlayerWithCommunity({
     sampleSize: 1,
@@ -273,6 +297,7 @@ test("composed percentiles interpolate boundaries and invert lower-is-better met
       deaths: quantiles(),
     },
   });
+
   assert.equal(metric(high, "kd").percentile, 99);
   assert.equal(metric(high, "average-deaths").percentile, 1);
 });

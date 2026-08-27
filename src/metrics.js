@@ -14,7 +14,17 @@ const METRIC_DEFINITIONS = [
   { id: "critical-hit-rate", label: "Critical-hit rate", unit: "%", communityField: "crit_shot_rate", format: formatPercent, calculate: (row) => ratio(row.criticalBullets, add(row.criticalBullets, row.heroBullets)) },
   { id: "boss-damage-per-minute", label: "Boss damage per minute", unit: "boss damage/min", communityField: "boss_damage_per_min", format: formatNumber, calculate: (row) => perMinute(row.bossDamage, row.durationSeconds) },
   { id: "healing-per-minute", label: "Healing per minute", unit: "healing/min", communityField: "healing_per_min", format: formatNumber, calculate: (row) => perMinute(row.healing, row.durationSeconds) },
+  { id: "kills-plus-assists", label: "Kills + assists", unit: "kills + assists/match", communityField: "kills_plus_assists", format: formatNumber, calculate: (row) => add(row.kills, row.assists) },
+  { id: "player-damage-per-health", label: "Player damage per health", unit: "damage/health", communityField: "player_damage_per_health", format: formatRatio, calculate: (row) => ratio(row.playerDamage, row.maxMaxHealth) },
+  { id: "average-last-hits", label: "Average last hits", unit: "last hits/match", communityField: "last_hits", format: formatNumber, calculate: (row) => row.lastHits },
+  { id: "average-denies", label: "Average denies", unit: "denies/match", communityField: "denies", format: formatNumber, calculate: (row) => row.denies },
+  { id: "self-healing-per-minute", label: "Self healing per minute", unit: "self healing/min", communityField: "self_healing_per_min", format: formatNumber, calculate: (row) => perMinute(row.selfHealing, row.durationSeconds) },
+  { id: "player-healing-per-minute", label: "Player healing per minute", unit: "player healing/min", communityField: "player_healing_per_min", format: formatNumber, calculate: (row) => perMinute(row.playerHealing, row.durationSeconds) },
+  { id: "heal-prevented", label: "Heal prevented", unit: "healing prevented/match", communityField: "heal_prevented", format: formatNumber, calculate: (row) => row.healPrevented },
 ];
+
+export const ANALYSIS_METRIC_IDS = Object.freeze(METRIC_DEFINITIONS.map(({ id }) => id));
+const ANALYSIS_METRIC_ID_SET = new Set(ANALYSIS_METRIC_IDS);
 
 const COMMUNITY_PERCENTILE_FIELDS = Object.freeze([
   { field: "percentile1", percentile: 1 },
@@ -28,7 +38,7 @@ const COMMUNITY_PERCENTILE_FIELDS = Object.freeze([
   { field: "percentile99", percentile: 99 },
 ]);
 
-const LOWER_IS_BETTER_METRICS = new Set(["average-deaths", "damage-taken-per-minute"]);
+const LOWER_IS_BETTER_METRICS = new Set(["average-deaths"]);
 
 function finiteNumber(value) {
   if (typeof value === "number") return Number.isFinite(value) ? value : null;
@@ -166,13 +176,17 @@ function readMatchRows(metadata, accountId) {
       kills: readPlayerNumber(player, ["kills"]),
       deaths: readPlayerNumber(player, ["deaths"]),
       assists: readPlayerNumber(player, ["assists"]),
+      lastHits: readPlayerNumber(player, ["last_hits"]),
+      denies: readPlayerNumber(player, ["denies"]),
       netWorth: readPlayerNumber(player?.final_stats ?? {}, ["net_worth", "netWorth"]) ?? readPlayerNumber(player, ["net_worth", "netWorth"]),
       playerDamage: readPlayerNumber(player, ["player_damage", "max_player_damage"]),
       playerDamageTaken: readPlayerNumber(player, ["player_damage_taken", "max_player_damage_taken"]),
+      maxMaxHealth: readPlayerNumber(player, ["max_max_health", "max_health"]),
       bossDamage: readPlayerNumber(player, ["boss_damage", "max_boss_damage"]),
       selfHealing: readPlayerNumber(player, ["self_healing", "max_self_healing"]),
       playerHealing: readPlayerNumber(player, ["player_healing", "max_player_healing"]),
       healing: readPlayerNumber(player, ["healing", "max_healing"]),
+      healPrevented: readPlayerNumber(player, ["heal_prevented", "max_heal_prevented"]),
       shotsHit: readPlayerNumber(player, ["shots_hit", "max_shots_hit"]),
       shotsMissed: readPlayerNumber(player, ["shots_missed", "max_shots_missed"]),
       criticalBullets: readPlayerNumber(player, ["hero_bullets_hit_crit", "max_hero_bullets_hit_crit"]),
@@ -254,6 +268,18 @@ function performancePercentile(value, entry, lowerIsBetter) {
 
 function supplementalValue(value, unit, format) {
   return { value, displayValue: format(value), unit };
+}
+
+export function hasExactAnalysisMetricSet(metrics) {
+  if (!Array.isArray(metrics) || metrics.length !== ANALYSIS_METRIC_IDS.length) return false;
+  const ids = new Set();
+  for (const metric of metrics) {
+    if (!metric || typeof metric !== "object" || Array.isArray(metric) || !ANALYSIS_METRIC_ID_SET.has(metric.id) || ids.has(metric.id)) {
+      return false;
+    }
+    ids.add(metric.id);
+  }
+  return ids.size === ANALYSIS_METRIC_IDS.length;
 }
 
 function aggregateRows(rows) {

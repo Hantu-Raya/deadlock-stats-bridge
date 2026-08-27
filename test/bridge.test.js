@@ -24,15 +24,22 @@ function analysis(sampleSize = 3) {
       ["kd", 2.345, 1.234],
       ["kda", 3.456, 2.345],
       ["average-kills", 4.567, 3.456],
-      ["average-assists", 5.678, 4.567],
       ["average-deaths", 1.234, 2.345],
-      ["damage-taken-per-minute", 6.789, 5.678],
+      ["average-assists", 5.678, 4.567],
+      ["net-worth-per-minute", 8.912, 7.891],
       ["player-damage-per-minute", 7.891, 6.789],
+      ["damage-taken-per-minute", 6.789, 5.678],
       ["accuracy", 0.4567, 0.5678],
       ["critical-hit-rate", 0.1234, 0.2345],
-      ["net-worth-per-minute", 8.912, 7.891],
       ["boss-damage-per-minute", 9.123, 8.912],
       ["healing-per-minute", 10.234, 9.123],
+      ["kills-plus-assists", 12.345, 11.234],
+      ["player-damage-per-health", 13.456, 12.345],
+      ["average-last-hits", 14.567, 13.456],
+      ["average-denies", 15.678, 14.567],
+      ["self-healing-per-minute", 16.789, 15.678],
+      ["player-healing-per-minute", 17.891, 16.789],
+      ["heal-prevented", 18.912, 17.891],
     ].map(([id, value, communityValue]) => ({ id, value, communityValue })),
   };
 }
@@ -47,11 +54,16 @@ function metadataRows(accountId, count = 150) {
         kills: 10 + (index % 2),
         deaths: 2,
         assists: 4,
+        last_hits: 20,
+        denies: 3,
         net_worth: 100,
         player_damage: 1000,
+        max_max_health: 1000,
         player_damage_taken: 500,
         boss_damage: 100,
         self_healing: 20,
+        player_healing: 40,
+        max_heal_prevented: 30,
         shots_hit: 80,
         shots_missed: 20,
         hero_bullets_hit_crit: 10,
@@ -221,6 +233,43 @@ test("protocol 3 requests publish percentile-shaped metrics", async () => {
   assert.ok(payload.groups.every((group) => group.metrics.every((metric) => (
     Object.keys(metric).join(",") === "id,player,community,percentile"
   ))));
+});
+
+test("protocol 4 requests publish strict tuple metrics", async () => {
+  const result = await runBridge({
+    location: { search: "?account_id=123&matches=50&mode=ranked&request=req_v4&protocol=4" },
+    documentRef: titleDocument(),
+    now: () => 10_000,
+    readPlayer: () => fresh(playerValue()),
+    readCommunity: (_storage, mode, scope) => fresh(communityValue(mode, scope)),
+    fetchMetadata: async () => { throw new Error("metadata should not be requested"); },
+    fetchCommunity: async () => { throw new Error("community should not be requested"); },
+  });
+
+  assert.equal(result.ok, true);
+  const payload = parseBridgeTitle(result.title).payload;
+  assert.equal(payload.v, 4);
+  assert.deepEqual(payload.groups.flatMap((group) => group.metrics.map((metric) => metric[0])), [
+    "kda",
+    "kills_plus_assists",
+    "player_damage_per_health",
+    "average_kills",
+    "average_deaths",
+    "average_assists",
+    "accuracy",
+    "critical_hit_rate",
+    "kd",
+    "player_damage_per_minute",
+    "damage_taken_per_minute",
+    "objective_damage_per_minute",
+    "net_worth_per_minute",
+    "average_last_hits",
+    "average_denies",
+    "self_healing_per_minute",
+    "player_healing_per_minute",
+    "heal_prevented",
+  ]);
+  assert.ok(payload.groups.every((group) => group.metrics.every((metric) => metric.length === 4)));
 });
 
 test("malformed fresh player cache falls through to metadata and preserves the community cache", async () => {
