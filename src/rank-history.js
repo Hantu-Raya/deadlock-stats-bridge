@@ -1,6 +1,6 @@
 // Display page for the ShowRank "Rank History" profile tab.
 // Panorama shows this page in a noninteractive CitadelHTMLPanel and reads only the status title.
-import { ApiError, fetchEnvelope } from "./api.js?v=20261019-2";
+import { ApiError, FETCH_TIMEOUT_MS, fetchEnvelope } from "./api.js?v=20261019-2";
 import { readCache, writeCache } from "./page-cache.js?v=20261019-2";
 
 export const RANK_TITLE_PREFIX = "DLRANKH1:";
@@ -10,7 +10,9 @@ export const HISTORY_TTL_MS = 5 * 60 * 1000;
 export const RANKS_TTL_MS = 60 * 60 * 1000;
 const API_ORIGIN = "https://api.deadlock-api.com";
 const HISTORY_PREFIX = "dlrh:history:v1:";
-const RANKS_KEY = "dlrh:ranks:v1";
+const RANKS_KEY = "dlrh:ranks:v2";
+const MMR_DOWN_KEY = "dlrh:mmr-down:v1";
+const MMR_DOWN_TTL_MS = 60 * 60 * 1000;
 const MAX_HISTORY_ENTRIES = 8;
 const REQUEST_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 const ACCOUNT_PATTERN = /^[1-9][0-9]{0,9}$/;
@@ -18,7 +20,8 @@ const MAX_ACCOUNT = 4294967295;
 const RANKED_MATCH_MODE = 4;
 const MAX_TIER = 11;
 const SUBRANKS = 6;
-const ICON_ORIGIN = "https://assets-bucket.deadlock-api.com/";
+const ICON_DIR = "./assets/ranks/";
+const ICON_PATTERN = /^\.\/assets\/ranks\/tier(0[1-9]|1[01])\.webp$/;
 
 const invalidPayload = () => new ApiError("Deadlock API payload is invalid", { code: "invalid_payload" });
 
@@ -59,8 +62,31 @@ export function normalizeHistory(data) {
     .map(([time, ordinal]) => [time, ordinal]);
 }
 
-function safeIcon(value) {
-  return typeof value === "string" && value.startsWith(ICON_ORIGIN) && !/["'<>\s]/.test(value) ? value : "";
+/**
+ * The same points as normalizeHistory, from /mmr-history rows ({match_id, start_time, rank}). That endpoint
+ * only lists ranked matches, is about 2 KB on the wire instead of 100-200 KB, and `rank` is the badge.
+ */
+export function normalizeMmrHistory(data) {
+  if (!Array.isArray(data)) throw invalidPayload();
+  const byMatch = new Map();
+  for (const row of data) {
+    if (!row || typeof row !== "object") continue;
+    if (!Number.isSafeInteger(row.match_id) || !Number.isSafeInteger(row.start_time) || row.start_time <= 0) continue;
+    const ordinal = badgeOrdinal(row.rank);
+    if (ordinal && !byMatch.has(row.match_id)) byMatch.set(row.match_id, [row.start_time, ordinal, row.match_id]);
+  }
+  return [...byMatch.values()]
+    .sort((a, b) => a[0] - b[0] || a[2] - b[2])
+    .map(([time, ordinal]) => [time, ordinal]);
+}
+
+// Tier icons are 64 px thumbnails shipped with the page (tools/make-rank-thumbnails.mjs); the CDN has no small variant.
+function tierIcon(tier) {
+  return `${ICON_DIR}tier${String(tier).padStart(2, "0")}.webp`;
+}
+
+function localIcon(value) {
+  return typeof value === "string" && ICON_PATTERN.test(value) ? value : "";
 }
 
 function safeColor(value) {
@@ -73,7 +99,7 @@ export function normalizeRanks(data) {
   for (const rank of data) {
     if (!rank || !Number.isSafeInteger(rank.tier) || rank.tier < 1 || rank.tier > MAX_TIER) continue;
     if (typeof rank.name !== "string" || !rank.name) continue;
-    ranks.push({ tier: rank.tier, name: rank.name.slice(0, 32), color: safeColor(rank.color), icon: safeIcon(rank.images?.large_webp) });
+    ranks.push({ tier: rank.tier, name: rank.name.slice(0, 32), color: safeColor(rank.color), icon: tierIcon(rank.tier) });
   }
   return ranks.sort((a, b) => a.tier - b.tier);
 }
@@ -200,8 +226,9 @@ export function buildChartSvg(points, ranks, { width = 1000, height = 140, curre
       parts.push(`<line x1="${left}" x2="${left + plotW}" y1="${round(bandTop + bandH)}" y2="${round(bandTop + bandH)}" stroke="#ffffff" stroke-opacity="0.14"/>`);
     }
     const size = Math.min(24, bandH - 2);
-    if (rank?.icon && size >= 10) {
-      parts.push(`<image href="${rank.icon}" x="10" y="${round(center - size / 2)}" width="${round(size)}" height="${round(size)}"/>`);
+    const icon = localIcon(rank?.icon);
+    if (icon && size >= 10) {
+      parts.push(`<image href="${icon}" x="10" y="${round(center - size / 2)}" width="${round(size)}" height="${round(size)}"/>`);
     }
     if (bandH >= 13) {
       parts.push(`<text x="40" y="${round(center + 4.5)}" fill="${lift(rank?.color)}" font-size="12" font-weight="800" letter-spacing="1">${escapeText((rank?.name || `Rank ${tier}`).toUpperCase())}</text>`);
@@ -233,10 +260,11 @@ export function buildChartSvg(points, ranks, { width = 1000, height = 140, curre
   const cx = left + plotW + 16;
   const cy = top + plotH / 2;
     parts.push(`<text x="${cx}" y="${round(cy - 16)}" fill="${MUTED}" font-size="11" font-weight="800" letter-spacing="1.5">CURRENT</text>`);
-  if (callout.rank?.icon) {
-    parts.push(`<image href="${callout.rank.icon}" x="${cx}" y="${round(cy - 8)}" width="30" height="30"/>`);
+  const calloutIcon = localIcon(callout.rank?.icon);
+  if (calloutIcon) {
+    parts.push(`<image href="${calloutIcon}" x="${cx}" y="${round(cy - 8)}" width="30" height="30"/>`);
   }
-  parts.push(`<text data-current="1" x="${callout.rank?.icon ? cx + 36 : cx}" y="${round(cy + 13)}" fill="${lift(callout.rank?.color)}" font-size="17" font-weight="800">${escapeText(callout.text)}</text>`);
+  parts.push(`<text data-current="1" x="${calloutIcon ? cx + 36 : cx}" y="${round(cy + 13)}" fill="${lift(callout.rank?.color)}" font-size="17" font-weight="800">${escapeText(callout.text)}</text>`);
   parts.push("</svg>");
   return parts.join("");
 }
@@ -250,12 +278,44 @@ async function loadRanks(deps) {
   return ranks;
 }
 
+const isAbort = (error, signal) => Boolean(signal?.aborted) || error?.name === "AbortError";
+
+/** True when mmr-history failed in a way match-history can cover: an HTTP error other than 429, or unusable data. */
+function mmrFallbackFailure(error) {
+  if (error?.code === "invalid_payload") return true;
+  return (error instanceof ApiError || error?.name === "ApiError") && Number.isInteger(error.status) && error.status > 0 && error.status !== 429;
+}
+
+// mmr-history is the cheap source (~2 KB); match-history (100-200 KB) is the fallback. Both share one FETCH_TIMEOUT_MS budget.
 async function loadHistory(account, deps) {
   const key = `${HISTORY_PREFIX}${account}`;
   const cached = readCache(deps.storage, key, HISTORY_TTL_MS, deps.now());
   if (cached) return cached;
-  const { data } = await fetchEnvelope(`${API_ORIGIN}/v1/players/${account}/match-history`, deps.fetchImpl, deps.signal);
-  const points = normalizeHistory(data);
+  const started = Date.now();
+  const remaining = () => FETCH_TIMEOUT_MS - (Date.now() - started);
+  let points = null;
+  if (readCache(deps.storage, MMR_DOWN_KEY, MMR_DOWN_TTL_MS, deps.now()) !== true) {
+    let failure = null;
+    try {
+      const { data } = await fetchEnvelope(`${API_ORIGIN}/v1/players/${account}/mmr-history`, deps.fetchImpl, deps.signal, { timeoutMs: remaining() });
+      points = normalizeMmrHistory(data);
+      if (!points.length) {
+        points = null;
+        failure = invalidPayload();
+      }
+    } catch (error) {
+      if (isAbort(error, deps.signal) || !mmrFallbackFailure(error)) throw error;
+      failure = error;
+    }
+    if (failure) {
+      writeCache(deps.storage, MMR_DOWN_KEY, true, deps.now());
+      if (remaining() <= 0) throw failure;
+    }
+  }
+  if (!points) {
+    const { data } = await fetchEnvelope(`${API_ORIGIN}/v1/players/${account}/match-history`, deps.fetchImpl, deps.signal, { timeoutMs: remaining() });
+    points = normalizeHistory(data);
+  }
   writeCache(deps.storage, key, points, deps.now(), { prefix: HISTORY_PREFIX, max: MAX_HISTORY_ENTRIES });
   return points;
 }
