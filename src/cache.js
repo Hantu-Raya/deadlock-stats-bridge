@@ -1,4 +1,4 @@
-import { hasExactAnalysisMetricSet } from "./metrics.js?v=20260827-1";
+import { hasExactAnalysisMetricSet } from "./metrics.js?v=20261019-8";
 
 const PLAYER_CACHE_PREFIX = "deadlock-stats-player:v2:";
 const COMMUNITY_CACHE_PREFIX = "deadlock-stats-community:v3:";

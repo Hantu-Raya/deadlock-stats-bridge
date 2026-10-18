@@ -1,10 +1,12 @@
 // Display page for the ShowRank "Rank History" profile tab.
 // Panorama shows this page in a noninteractive CitadelHTMLPanel and reads only the status title.
-import { ApiError, FETCH_TIMEOUT_MS, fetchEnvelope } from "./api.js?v=20261019-2";
-import { readCache, writeCache } from "./page-cache.js?v=20261019-2";
+import { ApiError, FETCH_TIMEOUT_MS, fetchEnvelope } from "./api.js?v=20261019-8";
+import { readCache, writeCache } from "./page-cache.js?v=20261019-8";
+import { createStatus, errorCode, escapeText, startPage } from "./page-status.js?v=20261019-8";
 
 export const RANK_TITLE_PREFIX = "DLRANKH1:";
 export const RANK_PROTOCOL = 1;
+const { publish, showMessage } = createStatus(RANK_TITLE_PREFIX, RANK_PROTOCOL);
 export const GROUP_SIZES = Object.freeze([1, 5, 10, 25]);
 export const HISTORY_TTL_MS = 5 * 60 * 1000;
 export const RANKS_TTL_MS = 60 * 60 * 1000;
@@ -151,10 +153,6 @@ export function monotonePath(xs, ys) {
     path += ` C${round(xs[i] + dx)},${round(ys[i] + tangents[i] * dx)} ${round(xs[i + 1] - dx)},${round(ys[i + 1] - tangents[i + 1] * dx)} ${round(xs[i + 1])},${round(ys[i + 1])}`;
   }
   return path;
-}
-
-function escapeText(value) {
-  return String(value).replace(/[&<>"']/g, (char) => `&#${char.charCodeAt(0)};`);
 }
 
 function formatDate(seconds) {
@@ -320,33 +318,6 @@ async function loadHistory(account, deps) {
   return points;
 }
 
-function errorCode(error) {
-  if (error?.code === "invalid_payload") return "invalid_payload";
-  if (error instanceof ApiError || error?.name === "ApiError") {
-    if (error.status === 429) return "rate_limit";
-    if (Number.isInteger(error.status) && error.status > 0) return "upstream_error";
-  }
-  return "network_error";
-}
-
-function publish(payload, documentRef, locationRef) {
-  const title = RANK_TITLE_PREFIX + JSON.stringify({ v: RANK_PROTOCOL, ...payload });
-  try {
-    documentRef.title = title;
-    if (locationRef) locationRef.hash = encodeURIComponent(title);
-  } catch {
-    /* page is unloading */
-  }
-}
-
-function showMessage(documentRef, text) {
-  try {
-    documentRef.body.innerHTML = `<p class="message">${escapeText(text)}</p>`;
-  } catch {
-    /* page is unloading */
-  }
-}
-
 export async function runRankHistory({
   documentRef = globalThis.document ?? null,
   locationRef = globalThis.location ?? null,
@@ -397,8 +368,4 @@ export async function runRankHistory({
   return { ok: true, points: grouped.length };
 }
 
-if (typeof window !== "undefined" && typeof document !== "undefined") {
-  const controller = typeof AbortController === "function" ? new AbortController() : null;
-  window.addEventListener?.("pagehide", () => controller?.abort(), { once: true });
-  void runRankHistory({ signal: controller?.signal });
-}
+startPage((signal) => runRankHistory({ signal }));

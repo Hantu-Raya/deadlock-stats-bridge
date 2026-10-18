@@ -1,12 +1,14 @@
 // Display page for the ShowRank playstyle radar on the profile page.
 // Each axis is the player's 30-day average placed in the community's distribution for the same window.
 // Panorama shows this page in a noninteractive CitadelHTMLPanel and reads only the status title.
-import { ApiError, fetchEnvelope } from "./api.js?v=20261019-2";
-import { interpolatePercentile } from "./metrics.js?v=20261019-2";
-import { readCache, readCooldown, writeCache, writeCooldown } from "./page-cache.js?v=20261019-7";
+import { ApiError, fetchEnvelope } from "./api.js?v=20261019-8";
+import { interpolatePercentile } from "./metrics.js?v=20261019-8";
+import { readCache, readCooldown, writeCache, writeCooldown } from "./page-cache.js?v=20261019-8";
+import { createStatus, errorCode, escapeText, startPage } from "./page-status.js?v=20261019-8";
 
 export const PLAY_TITLE_PREFIX = "DLPLAY1:";
 export const PLAY_PROTOCOL = 1;
+const { publish, showMessage } = createStatus(PLAY_TITLE_PREFIX, PLAY_PROTOCOL);
 export const COHORT_DAYS = 30;
 const API_ORIGIN = "https://api.deadlock-api.com";
 const MATCH_MODES = "ranked,unranked";
@@ -130,10 +132,6 @@ export function scoreAxes({ accountMetrics, communityMetrics, accountCurve, comm
   });
 }
 
-function escapeText(value) {
-  return String(value).replace(/[&<>"']/g, (char) => `&#${char.charCodeAt(0)};`);
-}
-
 const round = (value) => Math.round(value * 100) / 100;
 
 export function buildRadarSvg(axes, { width = 400, height = 260 } = {}) {
@@ -252,33 +250,6 @@ async function fetchJson(url, deps) {
   return data;
 }
 
-function errorCode(error) {
-  if (error?.code === "invalid_payload") return "invalid_payload";
-  if (error instanceof ApiError || error?.name === "ApiError") {
-    if (error.status === 429) return "rate_limit";
-    if (Number.isInteger(error.status) && error.status > 0) return "upstream_error";
-  }
-  return "network_error";
-}
-
-function publish(payload, documentRef, locationRef) {
-  const title = PLAY_TITLE_PREFIX + JSON.stringify({ v: PLAY_PROTOCOL, ...payload });
-  try {
-    documentRef.title = title;
-    if (locationRef) locationRef.hash = encodeURIComponent(title);
-  } catch {
-    /* page is unloading */
-  }
-}
-
-function showMessage(documentRef, text) {
-  try {
-    documentRef.body.innerHTML = `<p class="message">${escapeText(text)}</p>`;
-  } catch {
-    /* page is unloading */
-  }
-}
-
 export async function runPlaystyle({
   documentRef = globalThis.document ?? null,
   locationRef = globalThis.location ?? null,
@@ -343,8 +314,4 @@ export async function runPlaystyle({
   return { ok: true, axes: known };
 }
 
-if (typeof window !== "undefined" && typeof document !== "undefined") {
-  const controller = typeof AbortController === "function" ? new AbortController() : null;
-  window.addEventListener?.("pagehide", () => controller?.abort(), { once: true });
-  void runPlaystyle({ signal: controller?.signal });
-}
+startPage((signal) => runPlaystyle({ signal }));

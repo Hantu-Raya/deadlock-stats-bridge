@@ -1,4 +1,4 @@
-import { ApiError, fetchCommunity, fetchMetadata } from "./api.js?v=20260827-1";
+import { ApiError, fetchCommunity, fetchMetadata } from "./api.js?v=20261019-8";
 import {
   COMMUNITY_FRESH_TTL_MS,
   FRESH_TTL_MS,
@@ -12,9 +12,9 @@ import {
   withResourceOwnership,
   writeCommunityCache,
   writePlayerCache,
-} from "./cache.js?v=20261019-1";
-import { aggregatePlayerPrefixes, composePlayerWithCommunity } from "./metrics.js?v=20260827-1";
-import { bindExplorerControls, readControls, renderEmpty, renderError, renderExplorer, setCooldown, setLoading, writeControls } from "./ui.js";
+} from "./cache.js?v=20261019-8";
+import { aggregatePlayerPrefixes, composePlayerWithCommunity } from "./metrics.js?v=20261019-8";
+import { bindExplorerControls, readControls, renderEmpty, renderError, renderExplorer, setCooldown, setLoading, writeControls } from "./ui.js?v=20261019-8";
 
 export const SAMPLE_LIMITS = Object.freeze([25, 50, 100, 200]);
 const PLAYER_FETCH_LIMIT = 200;

@@ -1,4 +1,4 @@
-import { ApiError, fetchCommunity, fetchMetadata } from "./api.js?v=20260827-1";
+import { ApiError, fetchCommunity, fetchMetadata } from "./api.js?v=20261019-8";
 import {
   FRESH_TTL_MS,
   clearExpiredResults,
@@ -10,9 +10,9 @@ import {
   withResourceOwnership,
   writeCommunityCache,
   writePlayerCache,
-} from "./cache.js?v=20261019-1";
-import { aggregatePlayerPrefixes, composePlayerWithCommunity, hasExactAnalysisMetricSet } from "./metrics.js?v=20260827-1";
-import { DEFAULT_MATCHES, DEFAULT_MODE, DEFAULT_PROTOCOL, buildErrorTitle, buildSuccessTitle, parseBridgeQuery, TITLE_MAX_LENGTH } from "./title-protocol.js?v=20260827-1";
+} from "./cache.js?v=20261019-8";
+import { aggregatePlayerPrefixes, composePlayerWithCommunity, hasExactAnalysisMetricSet } from "./metrics.js?v=20261019-8";
+import { DEFAULT_MATCHES, DEFAULT_MODE, DEFAULT_PROTOCOL, buildErrorTitle, buildSuccessTitle, parseBridgeQuery, TITLE_MAX_LENGTH } from "./title-protocol.js?v=20261019-8";
 
 const ERROR_MESSAGES = Object.freeze({
   invalid_query: "Invalid bridge request.",

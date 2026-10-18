@@ -1,7 +1,7 @@
 // One-shot Panorama bridge for ShowRank party markers.
 // Groups lobby players who are Steam friends and on the same team in the current match.
 // deadlock-api uses the same rule for its historical `same_party` flag.
-import { ApiError, fetchEnvelope } from "./api.js?v=20261018-1";
+import { ApiError, fetchEnvelope } from "./api.js?v=20261019-8";
 
 export const PARTY_TITLE_PREFIX = "DLPARTY1:";
 export const PARTY_PROTOCOL = 1;

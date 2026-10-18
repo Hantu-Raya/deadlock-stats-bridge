@@ -1,4 +1,4 @@
-import { ANALYSIS_METRIC_IDS, hasExactAnalysisMetricSet } from "./metrics.js?v=20260827-1";
+import { ANALYSIS_METRIC_IDS, hasExactAnalysisMetricSet } from "./metrics.js?v=20261019-8";
 
 const TITLE_PREFIX = "DLSTATS2:";
 const TITLE_MAX_LENGTH = 2048;
