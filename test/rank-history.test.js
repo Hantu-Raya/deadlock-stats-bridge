@@ -205,7 +205,7 @@ test("the chart redraws at the browser's current size and survives a zero-size s
   assert.match(failed.documentRef.body.innerHTML, /Rank history unavailable/, "a resize never replaces the error text");
 });
 
-// Failure modes: the plot drifts from the Panorama shade panel (12% / 15% width insets) at another UI scale;
+// Failure modes: the plot loses its 12% / 15% width insets at another size;
 // an opaque surface rect survives and brightens the whole card under Panorama's screen blend.
 test("the plot spans the shared 12% / 15% width insets and paints no opaque background", () => {
   const ranks = normalizeRanks(RANK_ASSETS);

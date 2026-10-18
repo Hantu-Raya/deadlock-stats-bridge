@@ -139,15 +139,16 @@ function formatDate(seconds) {
   }
 }
 
-// Panorama screen-blends this page (black = transparent) over a native dark shade panel that spans the
-// same width insets, so the plot edges are shares of the width, not pixels: UI scale changes both alike.
+// Panorama screen-blends this page, so black is transparent. Plot edges are shares of the width so the
+// gutters keep their proportions at any UI scale.
 export const PLOT_LEFT_SHARE = 0.12;
 export const PLOT_RIGHT_SHARE = 0.15;
-const ACCENT = "#7ee2a8";
+// A deeper green than the UI accent: the user wants the line and fill to contrast with the bright text.
+const ACCENT = "#3fbf7f";
 const MUTED = "#c4c9d0";
 const MAX_MARKED_POINTS = 40;
 
-// Mixes an API rank colour 35% toward white so dim tiers (Phantom grey) stay readable over the dark plot.
+// Mixes an API rank colour 35% toward white so dim tiers (Phantom grey) stay readable over the scene.
 function lift(color) {
   const match = /^#([0-9a-f]{6})$/i.exec(color || "");
   if (!match) return "#ffffff";
@@ -186,7 +187,7 @@ export function buildChartSvg(points, ranks, { width = 1000, height = 140, curre
   const bandH = plotH / (highTier - lowTier + 1);
   const parts = [
     `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" font-family="Radiance, Segoe UI, sans-serif">`,
-    `<defs><linearGradient id="area" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${ACCENT}" stop-opacity="0.28"/><stop offset="1" stop-color="${ACCENT}" stop-opacity="0"/></linearGradient></defs>`,
+    `<defs><linearGradient id="area" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${ACCENT}" stop-opacity="0.22"/><stop offset="1" stop-color="${ACCENT}" stop-opacity="0"/></linearGradient></defs>`,
   ];
   for (let tier = lowTier; tier <= highTier; tier += 1) {
     const rank = ranks.find((entry) => entry.tier === tier);
