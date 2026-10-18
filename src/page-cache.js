@@ -30,3 +30,24 @@ export function writeCache(storage, key, value, now, bound = null) {
     /* storage is optional */
   }
 }
+
+const COOLDOWN_PREFIX = "dlcool:";
+
+/** Milliseconds left on the persisted rate-limit cooldown for `family`; 0 when none holds or the entry is unusable. */
+export function readCooldown(storage, family, now) {
+  try {
+    const until = JSON.parse(storage?.getItem(COOLDOWN_PREFIX + family) ?? "null")?.until;
+    return Number.isFinite(until) && until > now ? until - now : 0;
+  } catch {
+    return 0;
+  }
+}
+
+export function writeCooldown(storage, family, untilMs) {
+  if (!storage || !Number.isFinite(untilMs)) return;
+  try {
+    storage.setItem(COOLDOWN_PREFIX + family, JSON.stringify({ until: untilMs }));
+  } catch {
+    /* storage is optional */
+  }
+}

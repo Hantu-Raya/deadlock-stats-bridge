@@ -13,6 +13,7 @@ import {
   runPlaystyle,
   scoreAxes,
 } from "../src/playstyle.js";
+import { readCooldown, writeCooldown } from "../src/page-cache.js";
 
 const NOW = Date.UTC(2026, 9, 19, 15, 30);
 const SINCE = cohortStart(NOW);
@@ -160,6 +161,118 @@ test("run renders, caches community data, and reuses account data", async () => 
   const again = page({ fetchImpl, storage: first.storage });
   await again.run();
   assert.equal(urls.length, 6, "the same account inside ten minutes makes no requests");
+});
+
+const communityUrls = (urls) => urls.filter((url) => !url.includes("account_ids="));
+
+test("a successful resource is cached even when its sibling fails, so only the failed one is refetched", async () => {
+  const failing = { on: true };
+  const { urls, fetchImpl } = api({
+    curve: (account) => (account && failing.on ? jsonResponse({}, 500) : jsonResponse(account ? ACCOUNT_CURVE : COMMUNITY_CURVE)),
+  });
+  const storage = new MemoryStorage();
+  const first = page({ fetchImpl, storage });
+  await first.run();
+  assert.deepEqual(first.payload(), { v: 1, request: "p1", kind: "error", code: "upstream_error" });
+  assert.equal(urls.length, 4);
+  failing.on = false;
+  const second = page({ fetchImpl, storage });
+  assert.deepEqual(await second.run(), { ok: true, axes: 6 });
+  assert.equal(urls.length, 5, "only the account curve is requested again");
+  assert.match(urls[4], /player-performance-curve/);
+  assert.match(urls[4], /account_ids=/);
+  assert.equal(second.payload().kind, "ready");
+});
+
+test("five different accounts fetch the community pair once", async () => {
+  const { urls, fetchImpl } = api();
+  const storage = new MemoryStorage();
+  for (const account of [11, 22, 33, 44, 55]) {
+    const radar = page({ fetchImpl, storage, search: `?protocol=1&request=p${account}&account_id=${account}` });
+    assert.deepEqual(await radar.run(), { ok: true, axes: 6 });
+  }
+  assert.equal(communityUrls(urls).length, 2, "community metrics and curve are fetched once each");
+  assert.equal(urls.length - communityUrls(urls).length, 10, "every account fetches its own pair");
+});
+
+test("concurrent runs share one in-flight request per resource", async () => {
+  const { urls, fetchImpl } = api();
+  const storage = new MemoryStorage();
+  const one = page({ fetchImpl, storage });
+  const two = page({ fetchImpl, storage, search: "?protocol=1&request=p2&account_id=487348881" });
+  await Promise.all([one.run(), two.run()]);
+  assert.equal(urls.length, 4);
+  assert.equal(one.payload().kind, "ready");
+  assert.equal(two.payload().kind, "ready");
+});
+
+test("a 429 cools down the analytics family for Retry-After seconds, defaulting to 60", async () => {
+  for (const [headers, seconds] of [[{ "retry-after": "30" }, 30], [{}, 60]]) {
+    const limited = { on: true };
+    const { urls, fetchImpl } = api({
+      curve: (account) => (account && limited.on ? jsonResponse({}, 429, headers) : jsonResponse(account ? ACCOUNT_CURVE : COMMUNITY_CURVE)),
+    });
+    const storage = new MemoryStorage();
+    const first = page({ fetchImpl, storage });
+    await first.run();
+    assert.deepEqual(first.payload(), { v: 1, request: "p1", kind: "error", code: "rate_limit" });
+    assert.equal(urls.length, 4);
+    limited.on = false;
+    const during = page({ fetchImpl, storage, now: () => NOW + seconds * 1000 - 1000 });
+    assert.deepEqual(await during.run(), { ok: false, code: "rate_limit" });
+    assert.equal(urls.length, 4, `no request ${seconds - 1} s into the cooldown`);
+    assert.deepEqual(during.payload(), { v: 1, request: "p1", kind: "error", code: "rate_limit" });
+    assert.match(during.documentRef.body.innerHTML, /the stats service is busy/);
+    const after = page({ fetchImpl, storage, now: () => NOW + seconds * 1000 });
+    assert.deepEqual(await after.run(), { ok: true, axes: 6 });
+    assert.equal(urls.length, 5, "after the cooldown only the missing resource is fetched");
+    assert.equal(after.payload().kind, "ready");
+  }
+});
+
+test("resources already cached still render during a cooldown", async () => {
+  const { urls, fetchImpl } = api();
+  const storage = new MemoryStorage();
+  await page({ fetchImpl, storage }).run();
+  writeCooldown(storage, "analytics", NOW + 60_000);
+  const during = page({ fetchImpl, storage, now: () => NOW + 1000 });
+  assert.deepEqual(await during.run(), { ok: true, axes: 6 });
+  assert.equal(urls.length, 4);
+  assert.match(during.documentRef.body.innerHTML, /<svg /);
+});
+
+test("cooldown storage reports remaining milliseconds and tolerates bad data", () => {
+  const storage = new MemoryStorage();
+  assert.equal(readCooldown(storage, "analytics", NOW), 0);
+  writeCooldown(storage, "analytics", NOW + 30_000);
+  assert.equal(readCooldown(storage, "analytics", NOW + 10_000), 20_000);
+  assert.equal(readCooldown(storage, "analytics", NOW + 30_000), 0);
+  assert.equal(readCooldown(storage, "other", NOW), 0, "families are independent");
+  for (const key of [...storage.values.keys()]) storage.setItem(key, "{not json");
+  assert.equal(readCooldown(storage, "analytics", NOW), 0);
+  assert.equal(readCooldown(null, "analytics", NOW), 0);
+  assert.doesNotThrow(() => writeCooldown(null, "analytics", NOW + 1000));
+});
+
+test("an aborted run publishes nothing and stores nothing", async () => {
+  const controller = new AbortController();
+  const radar = page({ fetchImpl: () => { controller.abort(); return new Promise(() => {}); } });
+  assert.deepEqual(await radar.run({ signal: controller.signal }), { ok: false, code: "aborted" });
+  assert.equal(radar.documentRef.title, "");
+  assert.equal(radar.storage.length, 0);
+});
+
+test("corrupted cached entries are ignored and refetched", async () => {
+  const { urls, fetchImpl } = api();
+  const storage = new MemoryStorage();
+  await page({ fetchImpl, storage }).run();
+  assert.equal(urls.length, 4);
+  const keyFor = (scope, kind) => [...storage.values.keys()].find((key) => key.includes(scope) && key.includes(kind));
+  storage.setItem(keyFor("account", "metrics"), "{not json");
+  storage.setItem(keyFor("community", "curve"), JSON.stringify({ t: NOW, value: "junk" }));
+  const again = page({ fetchImpl, storage });
+  assert.deepEqual(await again.run(), { ok: true, axes: 6 });
+  assert.equal(urls.length, 6, "exactly the two corrupted resources are fetched again");
 });
 
 test("no matches, failures and invalid queries publish typed titles", async () => {

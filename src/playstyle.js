@@ -3,7 +3,7 @@
 // Panorama shows this page in a noninteractive CitadelHTMLPanel and reads only the status title.
 import { ApiError, fetchEnvelope } from "./api.js?v=20261019-2";
 import { interpolatePercentile } from "./metrics.js?v=20261019-2";
-import { readCache, writeCache } from "./page-cache.js?v=20261019-2";
+import { readCache, readCooldown, writeCache, writeCooldown } from "./page-cache.js?v=20261019-7";
 
 export const PLAY_TITLE_PREFIX = "DLPLAY1:";
 export const PLAY_PROTOCOL = 1;
@@ -13,9 +13,12 @@ const MATCH_MODES = "ranked,unranked";
 const EARLY_TIME_S = 600;
 const ACCOUNT_TTL_MS = 10 * 60 * 1000;
 const COMMUNITY_TTL_MS = 60 * 60 * 1000;
-const ACCOUNT_PREFIX = "dlps:account:v1:";
-const COMMUNITY_PREFIX = "dlps:community:v1:";
+const ACCOUNT_PREFIX = "dlps:account:v2:";
+const COMMUNITY_PREFIX = "dlps:community:v2:";
 const MAX_ACCOUNT_ENTRIES = 8;
+const COOLDOWN_FAMILY = "analytics";
+const DEFAULT_COOLDOWN_S = 60;
+const MAX_COOLDOWN_S = 3600;
 const REQUEST_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 const ACCOUNT_PATTERN = /^[1-9][0-9]{0,9}$/;
 const MAX_ACCOUNT = 4294967295;
@@ -202,12 +205,46 @@ function readCurve(data) {
     }));
 }
 
-async function loadCached(key, ttl, deps, bound, load) {
+const inflight = new Map();
+
+function isRateLimit(error) {
+  return (error instanceof ApiError || error?.name === "ApiError") && error.status === 429;
+}
+
+/**
+ * Returns the cached, re-validated resource; otherwise fetches it once per page (concurrent callers share the
+ * promise) unless a rate-limit cooldown holds. Only a validated value is written.
+ */
+function loadResource({ key, ttl, bound, url, read }, deps) {
   const cached = readCache(deps.storage, key, ttl, deps.now());
-  if (cached) return cached;
-  const value = await load();
-  writeCache(deps.storage, key, value, deps.now(), bound);
-  return value;
+  if (cached) {
+    try {
+      return Promise.resolve(read(cached));
+    } catch {
+      /* corrupted entry: refetch */
+    }
+  }
+  const pending = inflight.get(key);
+  if (pending) return pending;
+  const promise = (async () => {
+    const wait = readCooldown(deps.storage, COOLDOWN_FAMILY, deps.now());
+    if (wait > 0) throw new ApiError("Deadlock API request is rate limited", { status: 429, retryAfter: Math.ceil(wait / 1000), code: "rate_limit" });
+    let value;
+    try {
+      value = read(await fetchJson(url, deps));
+    } catch (error) {
+      if (isRateLimit(error)) {
+        const seconds = Number(error.retryAfter);
+        const cooldown = Number.isFinite(seconds) && seconds > 0 ? Math.min(seconds, MAX_COOLDOWN_S) : DEFAULT_COOLDOWN_S;
+        writeCooldown(deps.storage, COOLDOWN_FAMILY, deps.now() + cooldown * 1000);
+      }
+      throw error;
+    }
+    writeCache(deps.storage, key, value, deps.now(), bound);
+    return value;
+  })().finally(() => inflight.delete(key));
+  inflight.set(key, promise);
+  return promise;
 }
 
 async function fetchJson(url, deps) {
@@ -261,19 +298,21 @@ export async function runPlaystyle({
   const deps = { fetchImpl, storage, now, signal };
   const since = cohortStart(now());
   const urls = playstyleUrls(query.account, since);
+  const community = (kind, url, read) => ({ key: `${COMMUNITY_PREFIX}${kind}:${since}`, ttl: COMMUNITY_TTL_MS, bound: { prefix: `${COMMUNITY_PREFIX}${kind}:`, max: 1 }, url, read });
+  const account = (kind, url, read) => ({ key: `${ACCOUNT_PREFIX}${kind}:${query.account}:${since}`, ttl: ACCOUNT_TTL_MS, bound: { prefix: `${ACCOUNT_PREFIX}${kind}:`, max: MAX_ACCOUNT_ENTRIES }, url, read });
   let data;
   try {
-    const [community, account] = await Promise.all([
-      loadCached(`${COMMUNITY_PREFIX}${since}`, COMMUNITY_TTL_MS, deps, { prefix: COMMUNITY_PREFIX, max: 1 }, async () => {
-        const [metrics, curve] = await Promise.all([fetchJson(urls.communityMetrics, deps), fetchJson(urls.communityCurve, deps)]);
-        return { metrics: readMetrics(metrics), curve: readCurve(curve) };
-      }),
-      loadCached(`${ACCOUNT_PREFIX}${query.account}:${since}`, ACCOUNT_TTL_MS, deps, { prefix: ACCOUNT_PREFIX, max: MAX_ACCOUNT_ENTRIES }, async () => {
-        const [metrics, curve] = await Promise.all([fetchJson(urls.accountMetrics, deps), fetchJson(urls.accountCurve, deps)]);
-        return { metrics: readMetrics(metrics), curve: readCurve(curve) };
-      }),
+    // Every resource is cached on its own, so one failing fetch never discards its siblings.
+    const settled = await Promise.allSettled([
+      loadResource(community("metrics", urls.communityMetrics, readMetrics), deps),
+      loadResource(community("curve", urls.communityCurve, readCurve), deps),
+      loadResource(account("metrics", urls.accountMetrics, readMetrics), deps),
+      loadResource(account("curve", urls.accountCurve, readCurve), deps),
     ]);
-    data = { accountMetrics: account.metrics, accountCurve: account.curve, communityMetrics: community.metrics, communityCurve: community.curve };
+    const failed = settled.find((result) => result.status === "rejected");
+    if (failed) throw failed.reason;
+    const [communityMetrics, communityCurve, accountMetrics, accountCurve] = settled.map((result) => result.value);
+    data = { accountMetrics, accountCurve, communityMetrics, communityCurve };
   } catch (error) {
     if (signal?.aborted || error?.name === "AbortError") return { ok: false, code: "aborted" };
     const code = errorCode(error);
