@@ -25,8 +25,11 @@ test("buildMetadataUrl requests direct player columns for each supported sample"
       assert.equal(url.searchParams.get("include_info"), "false");
       assert.equal(url.searchParams.get("extra_match_columns"), "duration_s");
       assert.equal(url.searchParams.get("include_player_kda"), "true");
-      assert.equal(url.searchParams.get("include_player_final_stats"), "true");
-      assert.equal(url.searchParams.get("extra_player_columns"), "last_hits,denies,mvp_rank");
+      assert.equal(url.searchParams.get("include_player_final_stats"), null, "final stats come from projected stats.* columns (P4)");
+      assert.equal(url.searchParams.get("only_filtered_players"), null, "teammates stay in the response for kill participation");
+      const columns = url.searchParams.get("extra_player_columns").split(",");
+      for (const column of ["last_hits", "denies", "mvp_rank", "stats.net_worth", "stats.player_damage"]) assert.ok(columns.includes(column), column);
+      assert.ok(!columns.includes("net_worth"), "scalar net_worth differs from the final-stats value");
       assert.equal(url.searchParams.get("format"), "json");
     }
   }

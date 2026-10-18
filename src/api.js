@@ -2,9 +2,31 @@ const API_ORIGIN = "https://api.deadlock-api.com";
 const METADATA_PATH = "/v1/matches/metadata";
 const METRICS_PATH = "/v1/analytics/player-stats/metrics";
 
-// Keep final stats for combat/healing metrics and request direct scoreboard
-// columns for fields that are not included in the final-stats payload.
-const EXTRA_PLAYER_COLUMNS = ["last_hits", "denies", "mvp_rank"];
+// The metrics need a dozen end-of-match stats per player. include_player_final_stats
+// ships ~45 of them for all players, so request only those through match_player
+// columns instead. stats.* columns arrive as `stats_<name>` sample arrays; the
+// normalizer below moves them to `player.stats.<name>`, which src/metrics.js reads.
+const PLAYER_SCALAR_COLUMNS = ["last_hits", "denies", "mvp_rank"];
+// The scalar net_worth column is not the final-stats value (it drifts net worth/min), so use the series.
+const PLAYER_STAT_COLUMNS = [
+  "net_worth",
+  "player_damage",
+  "player_damage_taken",
+  "max_health",
+  "boss_damage",
+  "self_healing",
+  "player_healing",
+  "heal_prevented",
+  "shots_hit",
+  "shots_missed",
+  "hero_bullets_hit_crit",
+  "hero_bullets_hit",
+];
+const EXTRA_PLAYER_COLUMNS = [
+  ...PLAYER_SCALAR_COLUMNS,
+  ...PLAYER_STAT_COLUMNS.map((name) => `stats.${name}`),
+];
+const STAT_KEY_PREFIX = "stats_";
 export const MAX_RESPONSE_BYTES = 16 * 1024 * 1024;
 const API_MATCH_MODES = Object.freeze({
   ranked: "ranked",
@@ -35,7 +57,7 @@ export function buildMetadataUrl(accountId, limit, mode = "ranked") {
   params.set("include_info", "false");
   params.set("extra_match_columns", "duration_s");
   params.set("include_player_kda", "true");
-  params.set("include_player_final_stats", "true");
+  // Teammates stay in the response (only_filtered_players off): kill participation needs their kills.
   params.set("match_mode", apiMode);
   params.set("account_ids", String(accountId));
   params.set("extra_player_columns", EXTRA_PLAYER_COLUMNS.join(","));
@@ -44,6 +66,29 @@ export function buildMetadataUrl(accountId, limit, mode = "ranked") {
   params.set("limit", String(limit));
   params.set("format", "json");
   return url.toString();
+}
+
+/**
+ * Reshape a projected metadata response in place: `stats_<name>` sample arrays on
+ * each player become `player.stats.<name>`. Rows that already carry `stats` or
+ * `final_stats` objects, and non-matching payloads, are left untouched.
+ */
+export function normalizeMetadataProjection(data) {
+  const root = data && typeof data === "object" && !Array.isArray(data) && data.data !== undefined ? data.data : data;
+  const matches = Array.isArray(root) ? root : Array.isArray(root?.matches) ? root.matches : [];
+  for (const match of matches) {
+    const players = Array.isArray(match?.players) ? match.players : [];
+    for (const player of players) {
+      if (!player || typeof player !== "object") continue;
+      for (const key of Object.keys(player)) {
+        if (!key.startsWith(STAT_KEY_PREFIX)) continue;
+        if (!player.stats || typeof player.stats !== "object" || Array.isArray(player.stats)) player.stats = {};
+        player.stats[key.slice(STAT_KEY_PREFIX.length)] = player[key];
+        delete player[key];
+      }
+    }
+  }
+  return data;
 }
 
 export function buildMetricsUrl(limit = null, mode = "ranked") {
@@ -355,7 +400,9 @@ export async function fetchMetadata({
   assertMode(mode);
   if (signal?.aborted) throw abortError();
   const url = buildMetadataUrl(accountId, requestedLimit, mode);
-  return fetchEnvelope(url, fetchImpl, signal, { cache });
+  const envelope = await fetchEnvelope(url, fetchImpl, signal, { cache });
+  normalizeMetadataProjection(envelope.data);
+  return envelope;
 }
 
 export async function fetchCommunity({
