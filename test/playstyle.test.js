@@ -72,9 +72,12 @@ function api(overrides = {}) {
 function page({ fetchImpl, search = "?protocol=1&request=p1&account_id=487348881", storage = new MemoryStorage(), now = () => NOW } = {}) {
   const documentRef = { title: "", body: { innerHTML: "" } };
   const locationRef = { search, hash: "" };
+  const size = { width: 400, height: 260 };
+  const resizeTarget = new EventTarget();
   return {
-    documentRef, storage,
-    run: (extra = {}) => runPlaystyle({ documentRef, locationRef, fetchImpl, storage, now, viewport: { width: 400, height: 260 }, ...extra }),
+    documentRef, storage, size,
+    resize(width, height) { Object.assign(size, { width, height }); resizeTarget.dispatchEvent(new Event("resize")); },
+    run: (extra = {}) => runPlaystyle({ documentRef, locationRef, fetchImpl, storage, now, viewport: () => ({ ...size }), resizeTarget, ...extra }),
     payload() {
       assert.ok(documentRef.title.startsWith(PLAY_TITLE_PREFIX), documentRef.title);
       assert.equal(decodeURIComponent(locationRef.hash), documentRef.title);
@@ -177,4 +180,22 @@ test("no matches, failures and invalid queries publish typed titles", async () =
   const invalid = page({ fetchImpl: async () => { throw new Error("must not fetch"); }, search: "?protocol=1&request=p1" });
   await invalid.run();
   assert.deepEqual(invalid.payload(), { v: 1, request: "", kind: "error", code: "invalid_query" });
+});
+
+// Failure modes: the browser can start at 0x0 or a stale size before Panorama lays the card out; a fast cached
+// render would then stay mis-sized. A resize must redraw without republishing or replacing a message.
+test("the radar redraws at the browser's current size and survives a zero-size start", async () => {
+  const { fetchImpl } = api();
+  const radar = page({ fetchImpl });
+  radar.size.width = 0; radar.size.height = 0;
+  await radar.run();
+  assert.match(radar.documentRef.body.innerHTML, /<svg [^>]*width="400" height="260"/, "a zero-size browser draws at the fallback size");
+  const title = radar.documentRef.title;
+  radar.resize(360, 300);
+  assert.match(radar.documentRef.body.innerHTML, /<svg [^>]*width="360" height="300"/, "a resize redraws at the laid-out size");
+  assert.equal(radar.documentRef.title, title, "a redraw does not republish the status");
+  const failed = page({ fetchImpl: async () => jsonResponse({}, 500) });
+  await failed.run();
+  failed.resize(360, 300);
+  assert.match(failed.documentRef.body.innerHTML, /Playstyle unavailable/, "a resize never replaces the error text");
 });

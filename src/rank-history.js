@@ -245,7 +245,8 @@ export async function runRankHistory({
   fetchImpl = globalThis.fetch,
   storage = (() => { try { return globalThis.localStorage ?? null; } catch { return null; } })(),
   now = () => Date.now(),
-  viewport = { width: globalThis.innerWidth || 1000, height: globalThis.innerHeight || 140 },
+  viewport = () => ({ width: globalThis.innerWidth, height: globalThis.innerHeight }),
+  resizeTarget = globalThis.window ?? null,
   signal,
 } = {}) {
   const query = parseRankQuery(locationRef?.search ?? "");
@@ -273,11 +274,17 @@ export async function runRankHistory({
     publish({ request: query.request, kind: "empty", points: 0 }, documentRef, locationRef);
     return { ok: true, points: 0 };
   }
-  try {
-    documentRef.body.innerHTML = buildChartSvg(grouped, ranks, viewport);
-  } catch {
-    /* page is unloading */
-  }
+  // Panorama can load the page before laying out its panel, so draw at the current size and redraw on resize.
+  const draw = () => {
+    const size = viewport();
+    try {
+      documentRef.body.innerHTML = buildChartSvg(grouped, ranks, { width: size.width || 1000, height: size.height || 140 });
+    } catch {
+      /* page is unloading */
+    }
+  };
+  draw();
+  resizeTarget?.addEventListener?.("resize", draw);
   publish({ request: query.request, kind: "ready", points: grouped.length }, documentRef, locationRef);
   return { ok: true, points: grouped.length };
 }

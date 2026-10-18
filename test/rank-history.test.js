@@ -48,9 +48,12 @@ function jsonResponse(data, status = 200, headers = {}) {
 function page({ fetchImpl, search = query(), storage = new MemoryStorage(), now = () => 1_800_000_000_000 } = {}) {
   const documentRef = { title: "", body: { innerHTML: "" } };
   const locationRef = { search, hash: "" };
+  const size = { width: 1000, height: 140 };
+  const resizeTarget = new EventTarget();
   return {
-    documentRef, locationRef, storage,
-    run: (extra = {}) => runRankHistory({ documentRef, locationRef, fetchImpl, storage, now, viewport: { width: 1000, height: 140 }, ...extra }),
+    documentRef, locationRef, storage, size,
+    resize(width, height) { Object.assign(size, { width, height }); resizeTarget.dispatchEvent(new Event("resize")); },
+    run: (extra = {}) => runRankHistory({ documentRef, locationRef, fetchImpl, storage, now, viewport: () => ({ ...size }), resizeTarget, ...extra }),
     payload() {
       assert.ok(documentRef.title.startsWith(RANK_TITLE_PREFIX), documentRef.title);
       assert.equal(decodeURIComponent(locationRef.hash), documentRef.title, "fragment mirrors title");
@@ -168,4 +171,22 @@ test("aborted page publishes nothing", async () => {
   const aborted = page({ fetchImpl: async () => { controller.abort(); const error = new Error("aborted"); error.name = "AbortError"; throw error; } });
   await aborted.run({ signal: controller.signal });
   assert.equal(aborted.documentRef.title, "");
+});
+
+// Failure modes: Panorama un-collapses the host in the same frame it loads the page, so the browser can
+// start at 0x0 or a stale size; a cached page then renders before layout and stays mis-sized forever.
+test("the chart redraws at the browser's current size and survives a zero-size start", async () => {
+  const fetchImpl = async (url) => jsonResponse(url.includes("/assets/ranks") ? RANK_ASSETS : [match(1, 1_700_000_000, 96), match(2, 1_700_100_000, 101)]);
+  const chart = page({ fetchImpl });
+  chart.size.width = 0; chart.size.height = 0;
+  await chart.run();
+  assert.match(chart.documentRef.body.innerHTML, /<svg [^>]*width="1000" height="140"/, "a zero-size browser draws at the fallback size");
+  const title = chart.documentRef.title;
+  chart.resize(720, 166);
+  assert.match(chart.documentRef.body.innerHTML, /<svg [^>]*width="720" height="166"/, "a resize redraws at the laid-out size");
+  assert.equal(chart.documentRef.title, title, "a redraw does not republish the status");
+  const failed = page({ fetchImpl: async () => jsonResponse({}, 500) });
+  await failed.run();
+  failed.resize(720, 166);
+  assert.match(failed.documentRef.body.innerHTML, /Rank history unavailable/, "a resize never replaces the error text");
 });

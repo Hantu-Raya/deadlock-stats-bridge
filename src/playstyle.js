@@ -138,7 +138,7 @@ export function buildRadarSvg(axes, { width = 400, height = 260 } = {}) {
   const h = Math.max(180, Math.round(height));
   const cx = w / 2;
   const cy = h / 2 - 12;
-  const radius = Math.min(w / 2 - 92, h / 2 - 40);
+  const radius = Math.min(w / 2 - 112, h / 2 - 40);
   const angle = (index) => -Math.PI / 2 + (index * 2 * Math.PI) / axes.length;
   const at = (index, share) => [cx + Math.cos(angle(index)) * radius * share, cy + Math.sin(angle(index)) * radius * share];
   const ring = (share) => axes.map((_, index) => at(index, share).map(round).join(",")).join(" ");
@@ -146,15 +146,15 @@ export function buildRadarSvg(axes, { width = 400, height = 260 } = {}) {
   const top = known.length ? Math.max(...known.map((axis) => axis.score)) : null;
   const parts = [`<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" font-family="Radiance, Segoe UI, sans-serif">`];
   for (const share of [0.25, 0.5, 0.75, 1]) {
-    parts.push(`<polygon points="${ring(share)}" fill="none" stroke="#ffffff" stroke-opacity="${share === 1 ? 0.28 : 0.12}"/>`);
+    parts.push(`<polygon points="${ring(share)}" fill="none" stroke="#ffffff" stroke-opacity="${share === 1 ? 0.45 : 0.2}"/>`);
   }
   axes.forEach((_, index) => {
     const [x, y] = at(index, 1);
-    parts.push(`<line x1="${round(cx)}" y1="${round(cy)}" x2="${round(x)}" y2="${round(y)}" stroke="#ffffff" stroke-opacity="0.12"/>`);
+    parts.push(`<line x1="${round(cx)}" y1="${round(cy)}" x2="${round(x)}" y2="${round(y)}" stroke="#ffffff" stroke-opacity="0.2"/>`);
   });
   if (known.length === axes.length) {
     const shape = axes.map((axis, index) => at(index, axis.score / 100).map(round).join(",")).join(" ");
-    parts.push(`<polygon points="${shape}" fill="${GREEN}" fill-opacity="0.32" stroke="${GREEN}" stroke-width="2"/>`);
+    parts.push(`<polygon points="${shape}" fill="${GREEN}" fill-opacity="0.4" stroke="${GREEN}" stroke-width="2.5"/>`);
   }
   axes.forEach((axis, index) => {
     if (axis.score === null) return;
@@ -167,13 +167,13 @@ export function buildRadarSvg(axes, { width = 400, height = 260 } = {}) {
     const anchor = Math.abs(cos) < 0.2 ? "middle" : cos > 0 ? "start" : "end";
     const dy = Math.sin(angle(index)) < -0.5 ? -4 : Math.sin(angle(index)) > 0.5 ? 12 : 4;
     const highlighted = axis.score !== null && top !== null && top - axis.score <= 0.5;
-    const fill = highlighted ? GREEN : "#c9c9c9";
-    parts.push(`<text fill="${fill}" x="${round(x)}" y="${round(y + dy)}" font-size="11" font-weight="700" letter-spacing="0.5" text-anchor="${anchor}">${escapeText(axis.label)}</text>`);
+    const fill = highlighted ? GREEN : "#ffffff";
+    parts.push(`<text fill="${fill}" x="${round(x)}" y="${round(y + dy)}" font-size="13" font-weight="800" letter-spacing="0.6" text-anchor="${anchor}">${escapeText(axis.label)}</text>`);
     if (axis.score === null) {
-      parts.push(`<text fill="#8a8a8a" x="${round(x)}" y="${round(y + dy + 12)}" font-size="10" text-anchor="${anchor}">N/A</text>`);
+      parts.push(`<text fill="#bdbdbd" x="${round(x)}" y="${round(y + dy + 14)}" font-size="11" font-weight="700" text-anchor="${anchor}">N/A</text>`);
     }
   });
-  parts.push(`<text fill="#8a8a8a" x="${round(cx)}" y="${h - 4}" font-size="10" letter-spacing="1" text-anchor="middle">LAST 30 DAYS · RANKED + STANDARD</text>`);
+  parts.push(`<text fill="#bdbdbd" x="${round(cx)}" y="${h - 4}" font-size="11" font-weight="700" letter-spacing="1" text-anchor="middle">LAST 30 DAYS · RANKED + STANDARD</text>`);
   parts.push("</svg>");
   return parts.join("");
 }
@@ -248,7 +248,8 @@ export async function runPlaystyle({
   fetchImpl = globalThis.fetch,
   storage = (() => { try { return globalThis.localStorage ?? null; } catch { return null; } })(),
   now = () => Date.now(),
-  viewport = { width: globalThis.innerWidth || 400, height: globalThis.innerHeight || 260 },
+  viewport = () => ({ width: globalThis.innerWidth, height: globalThis.innerHeight }),
+  resizeTarget = globalThis.window ?? null,
   signal,
 } = {}) {
   const query = parsePlaystyleQuery(locationRef?.search ?? "");
@@ -288,11 +289,17 @@ export async function runPlaystyle({
     publish({ request: query.request, kind: "empty", axes: 0 }, documentRef, locationRef);
     return { ok: true, axes: 0 };
   }
-  try {
-    documentRef.body.innerHTML = buildRadarSvg(axes, viewport);
-  } catch {
-    /* page is unloading */
-  }
+  // Panorama can load the page before laying out its panel, so draw at the current size and redraw on resize.
+  const draw = () => {
+    const size = viewport();
+    try {
+      documentRef.body.innerHTML = buildRadarSvg(axes, { width: size.width || 400, height: size.height || 260 });
+    } catch {
+      /* page is unloading */
+    }
+  };
+  draw();
+  resizeTarget?.addEventListener?.("resize", draw);
   publish({ request: query.request, kind: "ready", axes: known }, documentRef, locationRef);
   return { ok: true, axes: known };
 }
