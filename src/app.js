@@ -4,6 +4,7 @@ import {
   FRESH_TTL_MS,
   STALE_TTL_MS,
   clearExpiredResults,
+  playerPrefixLimits,
   readCommunityCache,
   readPlayerCache,
   readRateState,
@@ -11,11 +12,12 @@ import {
   withResourceOwnership,
   writeCommunityCache,
   writePlayerCache,
-} from "./cache.js?v=20260827-1";
+} from "./cache.js?v=20261019-1";
 import { aggregatePlayerPrefixes, composePlayerWithCommunity } from "./metrics.js?v=20260827-1";
 import { bindExplorerControls, readControls, renderEmpty, renderError, renderExplorer, setCooldown, setLoading, writeControls } from "./ui.js";
 
 export const SAMPLE_LIMITS = Object.freeze([25, 50, 100, 200]);
+const PLAYER_FETCH_LIMIT = 200;
 export const DEFAULT_LIMIT = 50;
 export const CONTROLS_STORAGE_KEY = "deadlock-stats-controls";
 export const DEFAULT_EXPLORER_MODE = "ranked";
@@ -270,15 +272,15 @@ export function createExplorerApp(overrides = {}) {
             latest?.freshness === "fresh" && latest.value?.samples?.[String(limit)]) {
             return { cache: latest, value: latest.value, source: "cache", envelope: null };
           }
-          const response = await fetchPlayerEnvelope(accountId, mode, 200, signal, explicitRefresh, nowValue(deps.now));
+          const response = await fetchPlayerEnvelope(accountId, mode, PLAYER_FETCH_LIMIT, signal, explicitRefresh, nowValue(deps.now));
           if (signal?.aborted) {
             const error = new Error("The request was aborted");
             error.name = "AbortError";
             throw error;
           }
           if (!response.metadata) throw new ApiError("Player metadata was not returned", { code: "invalid_payload" });
-          const prefixes = aggregatePlayerPrefixes({ accountId, metadata: response.metadata.data, limits: SAMPLE_LIMITS });
-          const value = { ...prefixes, accountId, mode, maxMatches: 200, fetchedAt: response.fetchedAt };
+          const prefixes = aggregatePlayerPrefixes({ accountId, metadata: response.metadata.data, limits: playerPrefixLimits(PLAYER_FETCH_LIMIT) });
+          const value = { ...prefixes, accountId, mode, maxMatches: PLAYER_FETCH_LIMIT, fetchedAt: response.fetchedAt };
           try { deps.writePlayerCache(deps.storage, accountId, mode, value, nowValue(deps.now)); } catch { /* non-fatal quota errors */ }
           return { value, source: "network", envelope: response };
         } });

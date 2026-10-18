@@ -39,6 +39,12 @@ const MAX_RATE_BLOCK_MS = STALE_TTL_MS;
 export const MAX_CACHE_ENTRIES = 64;
 export const MAX_CACHE_SERIALIZED_BYTES = 1024 * 1024;
 
+export const PLAYER_PREFIX_LIMITS = Object.freeze([25, 50, 100, 150, 200]);
+
+export function playerPrefixLimits(maxMatches) {
+  return PLAYER_PREFIX_LIMITS.filter((limit) => limit <= maxMatches);
+}
+
 function defaultNow() {
   return Date.now();
 }
@@ -405,6 +411,16 @@ export function writePlayerCache(storage, accountId, mode, value, now = defaultN
   if (!Number.isFinite(now)) return false;
   const compact = compactPlayerValue(value, accountId, mode, now);
   if (!compact) return false;
+  // A fresh entry that covers more matches stays; a stale one is replaced whole.
+  // Prefixes from responses of different ages are never merged.
+  const existing = readRaw(storage, playerCacheKey(accountId, mode));
+  if (existing?.kind === "player" &&
+    existing.accountId === accountId &&
+    existing.mode === mode &&
+    Number.isSafeInteger(existing.maxMatches) &&
+    existing.maxMatches > compact.maxMatches &&
+    validPlayerSamples(existing) &&
+    entryFreshness(existing, now)?.freshness === "fresh") return false;
   return writeBounded(storage, playerCacheKey(accountId, mode), {
     kind: "player",
     savedAt: now,

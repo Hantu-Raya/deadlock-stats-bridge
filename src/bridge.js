@@ -2,6 +2,7 @@ import { ApiError, fetchCommunity, fetchMetadata } from "./api.js?v=20260827-1";
 import {
   FRESH_TTL_MS,
   clearExpiredResults,
+  playerPrefixLimits,
   readCommunityCache,
   readPlayerCache,
   readRateState,
@@ -9,7 +10,7 @@ import {
   withResourceOwnership,
   writeCommunityCache,
   writePlayerCache,
-} from "./cache.js?v=20260827-1";
+} from "./cache.js?v=20261019-1";
 import { aggregatePlayerPrefixes, composePlayerWithCommunity, hasExactAnalysisMetricSet } from "./metrics.js?v=20260827-1";
 import { DEFAULT_MATCHES, DEFAULT_MODE, DEFAULT_PROTOCOL, buildErrorTitle, buildSuccessTitle, parseBridgeQuery, TITLE_MAX_LENGTH } from "./title-protocol.js?v=20260827-1";
 
@@ -24,6 +25,7 @@ const ERROR_MESSAGES = Object.freeze({
   internal_error: "The stats bridge failed.",
 });
 const PLAYER_RATE_FAMILY = "metadata";
+const PLAYER_FETCH_LIMIT = 150;
 const COMMUNITY_RATE_FAMILY = "community";
 const bridgePlayerInFlight = new Map();
 const bridgeCommunityInFlight = new Map();
@@ -240,7 +242,7 @@ export async function runBridge(options = {}) {
           await waitForRateWindow(deps, PLAYER_RATE_FAMILY, clockValue(deps.now));
           let metadata;
           try {
-            metadata = await deps.fetchMetadata({ accountId: query.account, limit: 150, mode: query.mode, signal: deps.signal, fetchImpl: deps.fetchImpl });
+            metadata = await deps.fetchMetadata({ accountId: query.account, limit: PLAYER_FETCH_LIMIT, mode: query.mode, signal: deps.signal, fetchImpl: deps.fetchImpl });
           } catch (error) {
             if ((error instanceof ApiError || error?.name === "ApiError")) {
               try { deps.updateRate(deps.storage, PLAYER_RATE_FAMILY, error.headers, { now: clockValue(deps.now), status: error.status }); } catch { /* optional */ }
@@ -249,8 +251,8 @@ export async function runBridge(options = {}) {
           }
           try { deps.updateRate(deps.storage, PLAYER_RATE_FAMILY, metadata.headers, { now: clockValue(deps.now), status: metadata.status }); } catch { /* optional */ }
           if (deps.signal?.aborted) { const error = new Error("The request was aborted"); error.name = "AbortError"; throw error; }
-          const prefixes = aggregatePlayerPrefixes({ accountId: query.account, metadata: metadata.data, limits: [50, 100, 150] });
-          const value = { ...prefixes, accountId: query.account, mode: query.mode, maxMatches: 150, fetchedAt: safeIsoNow(deps.now) };
+          const prefixes = aggregatePlayerPrefixes({ accountId: query.account, metadata: metadata.data, limits: playerPrefixLimits(PLAYER_FETCH_LIMIT) });
+          const value = { ...prefixes, accountId: query.account, mode: query.mode, maxMatches: PLAYER_FETCH_LIMIT, fetchedAt: safeIsoNow(deps.now) };
           try { deps.writePlayer(deps.storage, query.account, query.mode, value, clockValue(deps.now)); } catch { /* optional */ }
           return { value, source: "network", envelope: { metadata } };
         } });

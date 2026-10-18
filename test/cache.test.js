@@ -1,12 +1,16 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
+import { createExplorerApp } from "../src/app.js";
+import { runBridge } from "../src/bridge.js";
+import { parseBridgeTitle } from "../src/title-protocol.js";
 import {
   COMMUNITY_FRESH_TTL_MS,
   FRESH_TTL_MS,
   MAX_CACHE_ENTRIES,
   MAX_CACHE_SERIALIZED_BYTES,
   STALE_TTL_MS,
+  playerPrefixLimits,
   purgeLegacyNamespaces,
   readCommunityCache,
   readPlayerCache,
@@ -17,7 +21,7 @@ import {
   writeCommunityCache,
   writePlayerCache,
 } from "../src/cache.js";
-import { ANALYSIS_METRIC_IDS } from "../src/metrics.js";
+import { ANALYSIS_METRIC_IDS, aggregatePlayerPrefixes } from "../src/metrics.js";
 
 class MemoryStorage {
   #values = new Map();
@@ -477,4 +481,249 @@ test("expired storage lease is reclaimed by the next owner", async () => {
   assert.equal(result.value, "recovered");
   assert.equal(runs, 1);
   assert.equal(storage.getItem("deadlock-stats-owner:v1:resource"), null);
+});
+
+const PREFIX_ACCOUNT = 487348881;
+const ownDirect = async ({ run }) => ({ owned: true, value: await run() });
+
+function metadataRows(accountId, count) {
+  return Array.from({ length: count }, (_, index) => ({
+    duration_s: 600 + (index % 5) * 30,
+    players: [
+      {
+        account_id: accountId,
+        team: 1,
+        kills: 5 + (index % 7),
+        deaths: 1 + (index % 4),
+        assists: 3 + (index % 3),
+        last_hits: 20 + (index % 11),
+        denies: 2 + (index % 2),
+        net_worth: 100 + index,
+        player_damage: 1000 + index * 3,
+        max_max_health: 1000,
+        player_damage_taken: 500 + index,
+        boss_damage: 100 + (index % 6),
+        self_healing: 20,
+        player_healing: 40,
+        max_heal_prevented: 30,
+        shots_hit: 80,
+        shots_missed: 20 + (index % 5),
+        hero_bullets_hit_crit: 10,
+        hero_bullets_hit: 100,
+        mvp_rank: 1 + (index % 6),
+      },
+      { account_id: accountId + 1, team: 1, kills: 8 },
+    ],
+  }));
+}
+
+function prefixSurfaces(clock, storage = new MemoryStorage()) {
+  const rows = metadataRows(PREFIX_ACCOUNT, 200);
+  const fetches = [];
+  const fetchMetadata = async ({ limit }) => {
+    fetches.push(limit);
+    return { url: "https://api.example.test/metadata", status: 200, headers: {}, data: rows.slice(0, limit) };
+  };
+  const fetchCommunity = async () => ({ url: "https://api.example.test/community", status: 200, headers: {}, data: { metrics: { kd: { avg: 2 } } } });
+  const ui = {
+    renders: [],
+    errors: [],
+    bindExplorerControls() {},
+    readControls() { return {}; },
+    writeControls() {},
+    setLoading() {},
+    setCooldown() {},
+    renderEmpty() {},
+    renderExplorer(model) { ui.renders.push(model); },
+    renderError(model) { ui.errors.push(model); },
+  };
+  const app = createExplorerApp({
+    ui,
+    storage,
+    location: new URL("https://example.test/explorer"),
+    history: { state: null, replaceState() {} },
+    now: () => clock.now,
+    fetchMetadata,
+    fetchCommunity,
+    own: ownDirect,
+  });
+  let requestId = 0;
+  const explorer = async (limit, { refresh = false } = {}) => {
+    const controls = { accountId: PREFIX_ACCOUNT, limit, mode: "ranked" };
+    const result = refresh ? await app.refresh(controls) : await app.lookup(controls);
+    assert.equal(result.ok, true, JSON.stringify(ui.errors.at(-1)?.message));
+    return result;
+  };
+  const bridge = async (matches) => {
+    requestId += 1;
+    const result = await runBridge({
+      location: { search: `?account_id=${PREFIX_ACCOUNT}&matches=${matches}&mode=ranked&request=req_prefix_${requestId}` },
+      documentRef: { title: "" },
+      storage,
+      now: () => clock.now,
+      own: ownDirect,
+      fetchMetadata,
+      fetchCommunity,
+    });
+    assert.equal(result.ok, true, result.title);
+    return result;
+  };
+  return { rows, fetches, storage, explorer, bridge };
+}
+
+function storedPlayer(storage) {
+  return JSON.parse(storage.getItem(`deadlock-stats-player:v2:${PREFIX_ACCOUNT}:ranked`));
+}
+
+function persisted(analysis) {
+  return JSON.parse(JSON.stringify({
+    sampleSize: analysis.sampleSize,
+    totalDurationSeconds: analysis.totalDurationSeconds,
+    metrics: analysis.metrics,
+    supplemental: analysis.supplemental,
+  }));
+}
+
+function assertPrefixesMatchAggregates(entry, rows, expectedKeys) {
+  assert.deepEqual(Object.keys(entry.samples).sort((a, b) => a - b), expectedKeys);
+  const direct = aggregatePlayerPrefixes({ accountId: PREFIX_ACCOUNT, metadata: rows.slice(0, entry.maxMatches), limits: expectedKeys.map(Number) });
+  for (const key of expectedKeys) {
+    const expected = persisted(direct.samples[key]);
+    const actual = persisted(entry.samples[key]);
+    assert.equal(actual.sampleSize, Number(key));
+    assert.deepEqual(actual.metrics.map(({ id, value, displayValue }) => ({ id, value, displayValue })),
+      expected.metrics.map(({ id, value, displayValue }) => ({ id, value, displayValue })), `prefix ${key} metrics`);
+    assert.deepEqual(actual.supplemental, expected.supplemental, `prefix ${key} supplemental`);
+    assert.equal(actual.totalDurationSeconds, expected.totalDurationSeconds);
+  }
+}
+
+function prefixValue(now, maxMatches) {
+  return {
+    accountId: 50,
+    mode: "ranked",
+    maxMatches,
+    fetchedAt: new Date(now).toISOString(),
+    samples: Object.fromEntries(playerPrefixLimits(maxMatches).map((limit) => [String(limit), sample(limit + maxMatches)])),
+  };
+}
+
+test("playerPrefixLimits lists every supported prefix up to a response size", () => {
+  assert.deepEqual(playerPrefixLimits(200), [25, 50, 100, 150, 200]);
+  assert.deepEqual(playerPrefixLimits(150), [25, 50, 100, 150]);
+  assert.deepEqual(playerPrefixLimits(60), [25, 50]);
+  assert.deepEqual(playerPrefixLimits(10), []);
+});
+
+test("explorer 200, bridge 150, then explorer 200 makes one metadata fetch", async () => {
+  const clock = { now: 5_000_000 };
+  const surfaces = prefixSurfaces(clock);
+
+  const first = await surfaces.explorer(200);
+  assert.equal(first.player.source, "network");
+  assert.deepEqual(surfaces.fetches, [200]);
+
+  clock.now += 1_000;
+  const bridge = await surfaces.bridge(150);
+  assert.deepEqual(surfaces.fetches, [200]);
+  assert.equal(parseBridgeTitle(bridge.title).payload.sample, 150);
+
+  clock.now += 1_000;
+  const again = await surfaces.explorer(200);
+  assert.equal(again.player.source, "cache");
+  assert.deepEqual(surfaces.fetches, [200]);
+
+  const entry = storedPlayer(surfaces.storage);
+  assert.equal(entry.maxMatches, 200);
+  assertPrefixesMatchAggregates(entry, surfaces.rows, ["25", "50", "100", "150", "200"]);
+});
+
+test("bridge 150 first stores every prefix to 150, then explorer 200 fetches once more and keeps all five", async () => {
+  const clock = { now: 5_000_000 };
+  const surfaces = prefixSurfaces(clock);
+
+  await surfaces.bridge(150);
+  assert.deepEqual(surfaces.fetches, [150]);
+  const afterBridge = storedPlayer(surfaces.storage);
+  assert.equal(afterBridge.maxMatches, 150);
+  assertPrefixesMatchAggregates(afterBridge, surfaces.rows, ["25", "50", "100", "150"]);
+
+  clock.now += 1_000;
+  assert.equal((await surfaces.explorer(25)).player.source, "cache");
+  assert.equal((await surfaces.explorer(100)).player.source, "cache");
+  await surfaces.bridge(50);
+  assert.deepEqual(surfaces.fetches, [150]);
+
+  clock.now += 1_000;
+  assert.equal((await surfaces.explorer(200)).player.source, "network");
+  assert.deepEqual(surfaces.fetches, [150, 200]);
+  const afterExplorer = storedPlayer(surfaces.storage);
+  assert.equal(afterExplorer.maxMatches, 200);
+  assertPrefixesMatchAggregates(afterExplorer, surfaces.rows, ["25", "50", "100", "150", "200"]);
+
+  clock.now += 1_000;
+  await surfaces.bridge(150);
+  assert.deepEqual(surfaces.fetches, [150, 200]);
+});
+
+test("a stale 200 entry and a fresh 150 bridge write never combine", async () => {
+  const clock = { now: 5_000_000 };
+  const surfaces = prefixSurfaces(clock);
+  await surfaces.explorer(200);
+  const staleSavedAt = storedPlayer(surfaces.storage).savedAt;
+
+  clock.now += FRESH_TTL_MS + 1;
+  await surfaces.bridge(150);
+  assert.deepEqual(surfaces.fetches, [200, 150]);
+
+  const entry = storedPlayer(surfaces.storage);
+  assert.equal(entry.maxMatches, 150);
+  assert.ok(entry.savedAt > staleSavedAt);
+  assert.equal(entry.fetchedAt, new Date(clock.now).toISOString());
+  assertPrefixesMatchAggregates(entry, surfaces.rows, ["25", "50", "100", "150"]);
+});
+
+test("writePlayerCache keeps a fresh larger entry and never merges samples across ages", () => {
+  const storage = new MemoryStorage();
+  const t0 = 3_000_000;
+  assert.equal(writePlayerCache(storage, 50, "ranked", prefixValue(t0, 200), t0), true);
+
+  const fresh = t0 + 1_000;
+  assert.equal(writePlayerCache(storage, 50, "ranked", prefixValue(fresh, 150), fresh), false);
+  const kept = readPlayerCache(storage, 50, "ranked", fresh);
+  assert.equal(kept.value.maxMatches, 200);
+  assert.equal(kept.value.fetchedAt, new Date(t0).toISOString());
+  assert.deepEqual(Object.keys(kept.value.samples).sort((a, b) => a - b), ["25", "50", "100", "150", "200"]);
+  assert.equal(kept.value.samples["150"].sampleSize, 350);
+
+  const equal = t0 + 2_000;
+  assert.equal(writePlayerCache(storage, 50, "ranked", prefixValue(equal, 200), equal), true);
+  assert.equal(readPlayerCache(storage, 50, "ranked", equal).value.fetchedAt, new Date(equal).toISOString());
+
+  const smallerNow = equal + 1_000;
+  assert.equal(writePlayerCache(storage, 50, "ranked", prefixValue(smallerNow, 100), smallerNow), false);
+  assert.equal(readPlayerCache(storage, 50, "ranked", smallerNow).value.maxMatches, 200);
+});
+
+test("writePlayerCache replaces a stale larger entry wholesale with a fresh smaller one", () => {
+  const storage = new MemoryStorage();
+  const t0 = 3_000_000;
+  writePlayerCache(storage, 50, "ranked", prefixValue(t0, 200), t0);
+
+  const later = t0 + FRESH_TTL_MS + 1;
+  assert.equal(writePlayerCache(storage, 50, "ranked", prefixValue(later, 150), later), true);
+  const cached = readPlayerCache(storage, 50, "ranked", later);
+  assert.equal(cached.freshness, "fresh");
+  assert.equal(cached.value.maxMatches, 150);
+  assert.equal(cached.value.fetchedAt, new Date(later).toISOString());
+  assert.deepEqual(Object.keys(cached.value.samples).sort((a, b) => a - b), ["25", "50", "100", "150"]);
+  assert.equal(cached.value.samples["25"].sampleSize, 175);
+});
+
+test("a fresh larger entry for another mode or account does not block a write", () => {
+  const storage = new MemoryStorage();
+  const t0 = 3_000_000;
+  writePlayerCache(storage, 50, "ranked", prefixValue(t0, 200), t0);
+  assert.equal(writePlayerCache(storage, 50, "standard", { ...prefixValue(t0, 150), mode: "standard" }, t0), true);
+  assert.equal(writePlayerCache(storage, 51, "ranked", { ...prefixValue(t0, 150), accountId: 51 }, t0), true);
 });
