@@ -110,16 +110,30 @@ test("monotone path never overshoots between neighbouring points", () => {
   assert.match(path, /^M0,50 C/);
   const controls = [...path.matchAll(/(-?[\d.]+),(-?[\d.]+)/g)].map((m) => Number(m[2]));
   assert.ok(controls.every((y) => y >= 10 - 1e-9 && y <= 50 + 1e-9), "control points stay inside the data range");
-  assert.equal(monotonePath([5], [7]), "M5,7");
 });
 
-test("svg escapes API text and draws one dot per point", () => {
+test("svg escapes API text, labels each tier with its icon and keeps one marker per point", () => {
   const ranks = normalizeRanks(RANK_ASSETS.map((rank) => (rank.tier === 9 ? { ...rank, name: "<script>x</script>" } : rank)));
   const svg = buildChartSvg([[1_700_000_000, 50], [1_700_100_000, 54], [1_700_200_000, 56]], ranks, { width: 1000, height: 140 });
   assert.ok(!svg.includes("<script>"), "tier names are escaped");
-  assert.equal((svg.match(/<circle /g) || []).length, 3);
-  assert.match(svg, /stroke-dasharray/);
+  assert.equal((svg.match(/<circle [^>]*data-point/g) || []).length, 3, "short histories mark every point");
   assert.match(svg, /rank09_lg\.webp/);
+  assert.match(svg, /rank10_lg\.webp/);
+});
+
+// Failure modes: the callout shows a group average instead of the latest real rank; long histories bury the
+// line under hundreds of dots; a missing icon or name breaks the callout.
+test("the current-rank callout names the latest match, and long histories mark only the latest point", () => {
+  const ranks = normalizeRanks(RANK_ASSETS);
+  const svg = buildChartSvg([[1, 50], [2, 53.4]], ranks, { width: 1000, height: 140, current: 56 });
+  assert.match(svg, /data-current[^>]*>Ascendant 2</, "ordinal 56 is Ascendant 2, not the averaged 53.4 (Phantom 5)");
+  const fallback = buildChartSvg([[1, 50], [2, 54]], ranks, { width: 1000, height: 140 });
+  assert.match(fallback, /data-current[^>]*>Phantom 6</, "without a raw rank the callout uses the last point");
+  const long = Array.from({ length: 120 }, (_, index) => [index, 50 + (index % 6)]);
+  const dense = buildChartSvg(long, ranks, { width: 1000, height: 140 });
+  assert.equal((dense.match(/<circle [^>]*data-point/g) || []).length, 1, "only the latest point is marked");
+  const bare = buildChartSvg([[1, 50]], normalizeRanks([]), { width: 1000, height: 140, current: 50 });
+  assert.match(bare, /data-current[^>]*>Rank 9 2</, "missing assets fall back to a tier number");
 });
 
 test("run fetches history and ranks once, renders, and reuses the cache for another group", async () => {

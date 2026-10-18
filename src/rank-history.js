@@ -19,7 +19,6 @@ const RANKED_MATCH_MODE = 4;
 const MAX_TIER = 11;
 const SUBRANKS = 6;
 const ICON_ORIGIN = "https://assets-bucket.deadlock-api.com/";
-const LINE_COLOR = "#8b93d9";
 
 const invalidPayload = () => new ApiError("Deadlock API payload is invalid", { code: "invalid_payload" });
 
@@ -140,13 +139,27 @@ function formatDate(seconds) {
   }
 }
 
-export function buildChartSvg(points, ranks, { width = 1000, height = 140 } = {}) {
-  const w = Math.max(240, Math.round(width));
+const SURFACE = "#0d0f12";
+const ACCENT = "#7ee2a8";
+const MUTED = "#8a9099";
+const MAX_MARKED_POINTS = 40;
+
+function rankLabel(ordinal, ranks) {
+  const rounded = Math.min(MAX_TIER * SUBRANKS, Math.max(1, Math.round(ordinal)));
+  const tier = Math.floor((rounded - 1) / SUBRANKS) + 1;
+  const rank = ranks.find((entry) => entry.tier === tier);
+  return { rank, text: `${rank?.name || `Rank ${tier}`} ${rounded - (tier - 1) * SUBRANKS}` };
+}
+
+// Layout: tier icons and names in the left gutter, tier bands behind a green line and area, and the latest
+// real rank (not a group average) as a callout in the right gutter.
+export function buildChartSvg(points, ranks, { width = 1000, height = 140, current } = {}) {
+  const w = Math.max(320, Math.round(width));
   const h = Math.max(90, Math.round(height));
-  const left = 40;
-  const right = 92;
-  const top = 10;
-  const bottom = 22;
+  const left = 118;
+  const right = 150;
+  const top = 12;
+  const bottom = 24;
   const ordinals = points.map(([, ordinal]) => ordinal);
   const lowTier = Math.max(1, Math.floor((Math.min(...ordinals) - 1) / SUBRANKS) + 1);
   const highTier = Math.min(MAX_TIER, Math.floor((Math.max(...ordinals) - 1) / SUBRANKS) + 1);
@@ -154,41 +167,65 @@ export function buildChartSvg(points, ranks, { width = 1000, height = 140 } = {}
   const hi = highTier * SUBRANKS + 0.5;
   const plotW = w - left - right;
   const plotH = h - top - bottom;
+  const plotBottom = top + plotH;
   const y = (ordinal) => top + plotH - ((ordinal - lo) / (hi - lo)) * plotH;
   const xs = points.map((_, index) => (points.length === 1 ? left + plotW / 2 : left + (index / (points.length - 1)) * plotW));
   const ys = points.map(([, ordinal]) => y(ordinal));
-  const parts = [`<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" font-family="Radiance, Segoe UI, sans-serif">`];
-  for (let ordinal = lo + 1; ordinal < hi; ordinal += 1) {
-    parts.push(`<line x1="${left}" x2="${left + plotW}" y1="${round(y(ordinal))}" y2="${round(y(ordinal))}" stroke="#ffffff" stroke-opacity="0.06" stroke-dasharray="1 3"/>`);
-  }
+  const bandH = plotH / (highTier - lowTier + 1);
+  const parts = [
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" font-family="Radiance, Segoe UI, sans-serif">`,
+    `<defs><linearGradient id="area" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${ACCENT}" stop-opacity="0.28"/><stop offset="1" stop-color="${ACCENT}" stop-opacity="0"/></linearGradient></defs>`,
+    `<rect width="${w}" height="${h}" fill="${SURFACE}"/>`,
+  ];
   for (let tier = lowTier; tier <= highTier; tier += 1) {
     const rank = ranks.find((entry) => entry.tier === tier);
-    const boundary = round(y((tier - 1) * SUBRANKS + 0.5));
-    const center = y((tier - 1) * SUBRANKS + 3.5);
+    const bandTop = y(tier * SUBRANKS + 0.5);
+    const center = bandTop + bandH / 2;
+    if ((tier - lowTier) % 2 === 0) {
+      parts.push(`<rect x="${left}" y="${round(bandTop)}" width="${plotW}" height="${round(bandH)}" fill="#ffffff" fill-opacity="0.03"/>`);
+    }
     if (tier > lowTier) {
-      parts.push(`<line x1="${left}" x2="${left + plotW}" y1="${boundary}" y2="${boundary}" stroke="${LINE_COLOR}" stroke-opacity="0.55" stroke-dasharray="6 4"/>`);
+      parts.push(`<line x1="${left}" x2="${left + plotW}" y1="${round(bandTop + bandH)}" y2="${round(bandTop + bandH)}" stroke="#ffffff" stroke-opacity="0.1"/>`);
     }
-    if (rank) {
-      parts.push(`<text x="${left + plotW + 8}" y="${round(center + 4)}" fill="${rank.color || LINE_COLOR}" font-size="12" font-weight="700">${escapeText(rank.name)}</text>`);
-      if (rank.icon) {
-        const size = Math.min(26, (plotH / (highTier - lowTier + 1)) * 0.9);
-        parts.push(`<image href="${rank.icon}" x="${round(left - size - 8)}" y="${round(center - size / 2)}" width="${round(size)}" height="${round(size)}"/>`);
-      }
+    const size = Math.min(22, bandH - 2);
+    if (rank?.icon && size >= 10) {
+      parts.push(`<image href="${rank.icon}" x="10" y="${round(center - size / 2)}" width="${round(size)}" height="${round(size)}"/>`);
+    }
+    if (bandH >= 13) {
+      parts.push(`<text x="38" y="${round(center + 4)}" fill="${rank?.color || MUTED}" font-size="11" font-weight="800" letter-spacing="1">${escapeText((rank?.name || `Rank ${tier}`).toUpperCase())}</text>`);
     }
   }
-  parts.push(`<line x1="${left}" x2="${left}" y1="${top}" y2="${top + plotH}" stroke="#ffffff" stroke-opacity="0.25"/>`);
-  parts.push(`<path d="${monotonePath(xs, ys)}" fill="none" stroke="#ffffff" stroke-width="2"/>`);
-  const radius = round(Math.max(1.5, Math.min(3.5, plotW / Math.max(1, points.length) / 3)));
+  parts.push(`<line x1="${left}" x2="${left + plotW}" y1="${plotBottom}" y2="${plotBottom}" stroke="#ffffff" stroke-opacity="0.16"/>`);
+  const line = monotonePath(xs, ys);
+  if (points.length > 1) {
+    parts.push(`<path d="${line} L${round(xs.at(-1))},${plotBottom} L${round(xs[0])},${plotBottom} Z" fill="url(#area)"/>`);
+  }
+  parts.push(`<path d="${line}" fill="none" stroke="${ACCENT}" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>`);
+  const last = points.length - 1;
   points.forEach((_, index) => {
-    const fill = index === 0 ? "#ffffff" : LINE_COLOR;
-    parts.push(`<circle cx="${round(xs[index])}" cy="${round(ys[index])}" r="${radius}" fill="${fill}" stroke="#20232a" stroke-width="1"/>`);
+    if (index !== last && points.length > MAX_MARKED_POINTS) return;
+    if (index === last) {
+      parts.push(`<circle cx="${round(xs[index])}" cy="${round(ys[index])}" r="9" fill="${ACCENT}" fill-opacity="0.18"/>`);
+      parts.push(`<circle data-point="${index}" cx="${round(xs[index])}" cy="${round(ys[index])}" r="4.5" fill="${ACCENT}" stroke="${SURFACE}" stroke-width="1.5"/>`);
+    } else {
+      parts.push(`<circle data-point="${index}" cx="${round(xs[index])}" cy="${round(ys[index])}" r="2.5" fill="${SURFACE}" stroke="${ACCENT}" stroke-width="1.5"/>`);
+    }
   });
-  const labelIndexes = new Set([0, points.length - 1]);
-  if (points.length >= 4) [1 / 3, 2 / 3].forEach((share) => labelIndexes.add(Math.round((points.length - 1) * share)));
+  const labelIndexes = new Set([0, last]);
+  if (points.length >= 4) [1 / 3, 2 / 3].forEach((share) => labelIndexes.add(Math.round(last * share)));
   for (const index of [...labelIndexes].sort((a, b) => a - b)) {
-    const anchor = points.length === 1 ? "middle" : index === 0 ? "start" : index === points.length - 1 ? "end" : "middle";
-    parts.push(`<text x="${round(xs[index])}" y="${h - 6}" fill="#c9c9c9" font-size="11" text-anchor="${anchor}">${escapeText(formatDate(points[index][0]))}</text>`);
+    const anchor = points.length === 1 ? "middle" : index === 0 ? "start" : index === last ? "end" : "middle";
+    parts.push(`<text x="${round(xs[index])}" y="${h - 7}" fill="${MUTED}" font-size="11" font-weight="700" text-anchor="${anchor}">${escapeText(formatDate(points[index][0]))}</text>`);
   }
+  const callout = rankLabel(Number.isFinite(current) ? current : ordinals.at(-1), ranks);
+  const cx = left + plotW + 24;
+  const cy = top + plotH / 2;
+  parts.push(`<line x1="${cx - 12}" x2="${cx - 12}" y1="${top}" y2="${plotBottom}" stroke="#ffffff" stroke-opacity="0.1"/>`);
+  parts.push(`<text x="${cx}" y="${round(cy - 16)}" fill="${MUTED}" font-size="10" font-weight="700" letter-spacing="1.5">CURRENT</text>`);
+  if (callout.rank?.icon) {
+    parts.push(`<image href="${callout.rank.icon}" x="${cx}" y="${round(cy - 8)}" width="28" height="28"/>`);
+  }
+  parts.push(`<text data-current="1" x="${callout.rank?.icon ? cx + 34 : cx}" y="${round(cy + 11)}" fill="${callout.rank?.color || "#ffffff"}" font-size="15" font-weight="800">${escapeText(callout.text)}</text>`);
   parts.push("</svg>");
   return parts.join("");
 }
@@ -278,7 +315,7 @@ export async function runRankHistory({
   const draw = () => {
     const size = viewport();
     try {
-      documentRef.body.innerHTML = buildChartSvg(grouped, ranks, { width: size.width || 1000, height: size.height || 140 });
+      documentRef.body.innerHTML = buildChartSvg(grouped, ranks, { width: size.width || 1000, height: size.height || 140, current: points.at(-1)[1] });
     } catch {
       /* page is unloading */
     }
