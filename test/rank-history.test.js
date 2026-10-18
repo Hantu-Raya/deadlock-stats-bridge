@@ -204,3 +204,14 @@ test("the chart redraws at the browser's current size and survives a zero-size s
   failed.resize(720, 166);
   assert.match(failed.documentRef.body.innerHTML, /Rank history unavailable/, "a resize never replaces the error text");
 });
+
+// Failure modes: the plot drifts from the Panorama shade panel (12% / 15% width insets) at another UI scale;
+// an opaque surface rect survives and brightens the whole card under Panorama's screen blend.
+test("the plot spans the shared 12% / 15% width insets and paints no opaque background", () => {
+  const ranks = normalizeRanks(RANK_ASSETS);
+  for (const [width, left, right] of [[1000, 120, 850], [1600, 192, 1360]]) {
+    const svg = buildChartSvg([[1, 50], [2, 54]], ranks, { width, height: 132 });
+    assert.match(svg, new RegExp(`<line data-baseline="1" x1="${left}" x2="${right}"`), `plot edges at ${width}px`);
+    assert.doesNotMatch(svg, new RegExp(`<rect [^>]*width="${width}" height="132"`), "no full-size background rect");
+  }
+});

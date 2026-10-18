@@ -139,10 +139,21 @@ function formatDate(seconds) {
   }
 }
 
-const SURFACE = "#0d0f12";
+// Panorama screen-blends this page (black = transparent) over a native dark shade panel that spans the
+// same width insets, so the plot edges are shares of the width, not pixels: UI scale changes both alike.
+export const PLOT_LEFT_SHARE = 0.12;
+export const PLOT_RIGHT_SHARE = 0.15;
 const ACCENT = "#7ee2a8";
-const MUTED = "#8a9099";
+const MUTED = "#c4c9d0";
 const MAX_MARKED_POINTS = 40;
+
+// Mixes an API rank colour 35% toward white so dim tiers (Phantom grey) stay readable over the dark plot.
+function lift(color) {
+  const match = /^#([0-9a-f]{6})$/i.exec(color || "");
+  if (!match) return "#ffffff";
+  const value = parseInt(match[1], 16);
+  return `#${[16, 8, 0].map((shift) => Math.round(((value >> shift) & 255) * 0.65 + 255 * 0.35).toString(16).padStart(2, "0")).join("")}`;
+}
 
 function rankLabel(ordinal, ranks) {
   const rounded = Math.min(MAX_TIER * SUBRANKS, Math.max(1, Math.round(ordinal)));
@@ -156,8 +167,8 @@ function rankLabel(ordinal, ranks) {
 export function buildChartSvg(points, ranks, { width = 1000, height = 140, current } = {}) {
   const w = Math.max(320, Math.round(width));
   const h = Math.max(90, Math.round(height));
-  const left = 118;
-  const right = 150;
+  const left = Math.round(w * PLOT_LEFT_SHARE);
+  const right = Math.round(w * PLOT_RIGHT_SHARE);
   const top = 12;
   const bottom = 24;
   const ordinals = points.map(([, ordinal]) => ordinal);
@@ -169,63 +180,62 @@ export function buildChartSvg(points, ranks, { width = 1000, height = 140, curre
   const plotH = h - top - bottom;
   const plotBottom = top + plotH;
   const y = (ordinal) => top + plotH - ((ordinal - lo) / (hi - lo)) * plotH;
-  const xs = points.map((_, index) => (points.length === 1 ? left + plotW / 2 : left + (index / (points.length - 1)) * plotW));
+  const pad = 16;
+  const xs = points.map((_, index) => (points.length === 1 ? left + plotW / 2 : left + pad + (index / (points.length - 1)) * (plotW - 2 * pad)));
   const ys = points.map(([, ordinal]) => y(ordinal));
   const bandH = plotH / (highTier - lowTier + 1);
   const parts = [
     `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" font-family="Radiance, Segoe UI, sans-serif">`,
     `<defs><linearGradient id="area" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${ACCENT}" stop-opacity="0.28"/><stop offset="1" stop-color="${ACCENT}" stop-opacity="0"/></linearGradient></defs>`,
-    `<rect width="${w}" height="${h}" fill="${SURFACE}"/>`,
   ];
   for (let tier = lowTier; tier <= highTier; tier += 1) {
     const rank = ranks.find((entry) => entry.tier === tier);
     const bandTop = y(tier * SUBRANKS + 0.5);
     const center = bandTop + bandH / 2;
     if ((tier - lowTier) % 2 === 0) {
-      parts.push(`<rect x="${left}" y="${round(bandTop)}" width="${plotW}" height="${round(bandH)}" fill="#ffffff" fill-opacity="0.03"/>`);
+      parts.push(`<rect x="${left}" y="${round(bandTop)}" width="${plotW}" height="${round(bandH)}" fill="#ffffff" fill-opacity="0.035"/>`);
     }
     if (tier > lowTier) {
-      parts.push(`<line x1="${left}" x2="${left + plotW}" y1="${round(bandTop + bandH)}" y2="${round(bandTop + bandH)}" stroke="#ffffff" stroke-opacity="0.1"/>`);
+      parts.push(`<line x1="${left}" x2="${left + plotW}" y1="${round(bandTop + bandH)}" y2="${round(bandTop + bandH)}" stroke="#ffffff" stroke-opacity="0.14"/>`);
     }
-    const size = Math.min(22, bandH - 2);
+    const size = Math.min(24, bandH - 2);
     if (rank?.icon && size >= 10) {
       parts.push(`<image href="${rank.icon}" x="10" y="${round(center - size / 2)}" width="${round(size)}" height="${round(size)}"/>`);
     }
     if (bandH >= 13) {
-      parts.push(`<text x="38" y="${round(center + 4)}" fill="${rank?.color || MUTED}" font-size="11" font-weight="800" letter-spacing="1">${escapeText((rank?.name || `Rank ${tier}`).toUpperCase())}</text>`);
+      parts.push(`<text x="40" y="${round(center + 4.5)}" fill="${lift(rank?.color)}" font-size="12" font-weight="800" letter-spacing="1">${escapeText((rank?.name || `Rank ${tier}`).toUpperCase())}</text>`);
     }
   }
-  parts.push(`<line x1="${left}" x2="${left + plotW}" y1="${plotBottom}" y2="${plotBottom}" stroke="#ffffff" stroke-opacity="0.16"/>`);
+  parts.push(`<line data-baseline="1" x1="${left}" x2="${left + plotW}" y1="${plotBottom}" y2="${plotBottom}" stroke="#ffffff" stroke-opacity="0.22"/>`);
   const line = monotonePath(xs, ys);
   if (points.length > 1) {
     parts.push(`<path d="${line} L${round(xs.at(-1))},${plotBottom} L${round(xs[0])},${plotBottom} Z" fill="url(#area)"/>`);
   }
-  parts.push(`<path d="${line}" fill="none" stroke="${ACCENT}" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>`);
+  parts.push(`<path d="${line}" fill="none" stroke="${ACCENT}" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>`);
   const last = points.length - 1;
   points.forEach((_, index) => {
     if (index !== last && points.length > MAX_MARKED_POINTS) return;
     if (index === last) {
       parts.push(`<circle cx="${round(xs[index])}" cy="${round(ys[index])}" r="9" fill="${ACCENT}" fill-opacity="0.18"/>`);
-      parts.push(`<circle data-point="${index}" cx="${round(xs[index])}" cy="${round(ys[index])}" r="4.5" fill="${ACCENT}" stroke="${SURFACE}" stroke-width="1.5"/>`);
+      parts.push(`<circle data-point="${index}" cx="${round(xs[index])}" cy="${round(ys[index])}" r="5" fill="${ACCENT}"/>`);
     } else {
-      parts.push(`<circle data-point="${index}" cx="${round(xs[index])}" cy="${round(ys[index])}" r="2.5" fill="${SURFACE}" stroke="${ACCENT}" stroke-width="1.5"/>`);
+      parts.push(`<circle data-point="${index}" cx="${round(xs[index])}" cy="${round(ys[index])}" r="2.5" fill="#000000" stroke="${ACCENT}" stroke-width="1.5"/>`);
     }
   });
   const labelIndexes = new Set([0, last]);
   if (points.length >= 4) [1 / 3, 2 / 3].forEach((share) => labelIndexes.add(Math.round(last * share)));
   for (const index of [...labelIndexes].sort((a, b) => a - b)) {
     const anchor = points.length === 1 ? "middle" : index === 0 ? "start" : index === last ? "end" : "middle";
-    parts.push(`<text x="${round(xs[index])}" y="${h - 7}" fill="${MUTED}" font-size="11" font-weight="700" text-anchor="${anchor}">${escapeText(formatDate(points[index][0]))}</text>`);
+    parts.push(`<text x="${round(xs[index])}" y="${h - 7}" fill="${MUTED}" font-size="12" font-weight="700" text-anchor="${anchor}">${escapeText(formatDate(points[index][0]))}</text>`);
   }
   const callout = rankLabel(Number.isFinite(current) ? current : ordinals.at(-1), ranks);
-  const cx = left + plotW + 24;
+  const cx = left + plotW + 16;
   const cy = top + plotH / 2;
-  parts.push(`<line x1="${cx - 12}" x2="${cx - 12}" y1="${top}" y2="${plotBottom}" stroke="#ffffff" stroke-opacity="0.1"/>`);
-  parts.push(`<text x="${cx}" y="${round(cy - 16)}" fill="${MUTED}" font-size="10" font-weight="700" letter-spacing="1.5">CURRENT</text>`);
+    parts.push(`<text x="${cx}" y="${round(cy - 16)}" fill="${MUTED}" font-size="11" font-weight="800" letter-spacing="1.5">CURRENT</text>`);
   if (callout.rank?.icon) {
-    parts.push(`<image href="${callout.rank.icon}" x="${cx}" y="${round(cy - 8)}" width="28" height="28"/>`);
+    parts.push(`<image href="${callout.rank.icon}" x="${cx}" y="${round(cy - 8)}" width="30" height="30"/>`);
   }
-  parts.push(`<text data-current="1" x="${callout.rank?.icon ? cx + 34 : cx}" y="${round(cy + 11)}" fill="${callout.rank?.color || "#ffffff"}" font-size="15" font-weight="800">${escapeText(callout.text)}</text>`);
+  parts.push(`<text data-current="1" x="${callout.rank?.icon ? cx + 36 : cx}" y="${round(cy + 13)}" fill="${lift(callout.rank?.color)}" font-size="17" font-weight="800">${escapeText(callout.text)}</text>`);
   parts.push("</svg>");
   return parts.join("");
 }
