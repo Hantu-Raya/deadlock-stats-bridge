@@ -28,25 +28,25 @@ Only `styles.css` changes. No HTML, JS or behavior changes.
 
 | Before | After |
 |---|---|
-| ![before](https://raw.githubusercontent.com/Hantu-Raya/deadlock-stats-bridge/redesign/explorer-styles/docs/prs/img/redesign-before-fold-1440.png) | ![after](https://raw.githubusercontent.com/Hantu-Raya/deadlock-stats-bridge/redesign/explorer-styles/docs/prs/img/redesign-after-fold-1440.png) |
+| ![before](https://raw.githubusercontent.com/Hantu-Raya/deadlock-stats-bridge/08f37b7/docs/prs/img/redesign-before-fold-1440.png) | ![after](https://raw.githubusercontent.com/Hantu-Raya/deadlock-stats-bridge/08f37b7/docs/prs/img/redesign-after-fold-1440.png) |
 
 - **Before:** six orange section labels, and the player and community columns look alike.
   **After:** the player column is the mint subject and community is the muted reference.
 
 | Before, full page | After, full page |
 |---|---|
-| ![before full](https://raw.githubusercontent.com/Hantu-Raya/deadlock-stats-bridge/redesign/explorer-styles/docs/prs/img/redesign-before-full-1440.png) | ![after full](https://raw.githubusercontent.com/Hantu-Raya/deadlock-stats-bridge/redesign/explorer-styles/docs/prs/img/redesign-after-full-1440.png) |
+| ![before full](https://raw.githubusercontent.com/Hantu-Raya/deadlock-stats-bridge/08f37b7/docs/prs/img/redesign-before-full-1440.png) | ![after full](https://raw.githubusercontent.com/Hantu-Raya/deadlock-stats-bridge/08f37b7/docs/prs/img/redesign-after-full-1440.png) |
 
 - **Before:** on a phone, the metric tables scroll sideways.
   **After:** each metric is a card with Player and Community labels.
 
 | Phone before | Phone after |
 |---|---|
-| ![phone before](https://raw.githubusercontent.com/Hantu-Raya/deadlock-stats-bridge/redesign/explorer-styles/docs/prs/img/redesign-before-full-390.png) | ![phone after](https://raw.githubusercontent.com/Hantu-Raya/deadlock-stats-bridge/redesign/explorer-styles/docs/prs/img/redesign-after-full-390.png) |
+| ![phone before](https://raw.githubusercontent.com/Hantu-Raya/deadlock-stats-bridge/08f37b7/docs/prs/img/redesign-before-full-390.png) | ![phone after](https://raw.githubusercontent.com/Hantu-Raya/deadlock-stats-bridge/08f37b7/docs/prs/img/redesign-after-full-390.png) |
 
 | Tablet, 900px | Keyboard focus | Error state |
 |---|---|---|
-| ![tablet](https://raw.githubusercontent.com/Hantu-Raya/deadlock-stats-bridge/redesign/explorer-styles/docs/prs/img/redesign-after-fold-900.png) | ![focus](https://raw.githubusercontent.com/Hantu-Raya/deadlock-stats-bridge/redesign/explorer-styles/docs/prs/img/redesign-after-focus-1440.png) | ![error](https://raw.githubusercontent.com/Hantu-Raya/deadlock-stats-bridge/redesign/explorer-styles/docs/prs/img/redesign-after-error-1440.png) |
+| ![tablet](https://raw.githubusercontent.com/Hantu-Raya/deadlock-stats-bridge/08f37b7/docs/prs/img/redesign-after-fold-900.png) | ![focus](https://raw.githubusercontent.com/Hantu-Raya/deadlock-stats-bridge/08f37b7/docs/prs/img/redesign-after-focus-1440.png) | ![error](https://raw.githubusercontent.com/Hantu-Raya/deadlock-stats-bridge/08f37b7/docs/prs/img/redesign-after-error-1440.png) |
 
 - `node --test` passes 149 tests.
 
