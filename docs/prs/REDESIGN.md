@@ -60,4 +60,4 @@ Reverting `styles.css` restores the old look.
 
 - **Other pages:** the stylesheet is used only by `index.html`. The chart, party and bridge pages carry their own inline styles.
 - **Phone tables:** the card labels Player, Community and Result come from CSS column positions. If a table gains or reorders columns, update the labels in `styles.css`.
-- **Browser support:** the stylesheet needs `:has()`-free CSS grid and `100dvh`. Older browsers fall back to `min-height` on the body, which is harmless.
+- **Browser support:** the layout uses CSS grid and `100dvh`. A browser without `dvh` ignores that one declaration, which is harmless.
