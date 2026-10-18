@@ -362,4 +362,5 @@ export {
   communityAverage,
   formatNumber,
   formatPercent,
+  interpolatePercentile,
 };

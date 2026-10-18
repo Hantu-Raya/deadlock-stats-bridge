@@ -1,6 +1,7 @@
 // Display page for the ShowRank "Rank History" profile tab.
 // Panorama shows this page in a noninteractive CitadelHTMLPanel and reads only the status title.
-import { ApiError, fetchEnvelope } from "./api.js?v=20261019-1";
+import { ApiError, fetchEnvelope } from "./api.js?v=20261019-2";
+import { readCache, writeCache } from "./page-cache.js?v=20261019-2";
 
 export const RANK_TITLE_PREFIX = "DLRANKH1:";
 export const RANK_PROTOCOL = 1;
@@ -192,35 +193,6 @@ export function buildChartSvg(points, ranks, { width = 1000, height = 140 } = {}
   return parts.join("");
 }
 
-function readCache(storage, key, ttl, now) {
-  try {
-    const entry = JSON.parse(storage?.getItem(key) ?? "null");
-    return entry && Number.isFinite(entry.t) && now - entry.t >= 0 && now - entry.t < ttl ? entry.value : null;
-  } catch {
-    return null;
-  }
-}
-
-function writeCache(storage, key, value, now) {
-  if (!storage) return;
-  try {
-    if (key.startsWith(HISTORY_PREFIX)) {
-      const others = [];
-      for (let index = 0; index < storage.length; index += 1) {
-        const other = storage.key(index);
-        if (other && other !== key && other.startsWith(HISTORY_PREFIX)) others.push(other);
-      }
-      const aged = others
-        .map((other) => [other, (() => { try { return JSON.parse(storage.getItem(other)).t || 0; } catch { return 0; } })()])
-        .sort((a, b) => a[1] - b[1]);
-      while (aged.length >= MAX_HISTORY_ENTRIES) storage.removeItem(aged.shift()[0]);
-    }
-    storage.setItem(key, JSON.stringify({ t: now, value }));
-  } catch {
-    /* storage is optional */
-  }
-}
-
 async function loadRanks(deps) {
   const cached = readCache(deps.storage, RANKS_KEY, RANKS_TTL_MS, deps.now());
   if (cached) return cached;
@@ -236,7 +208,7 @@ async function loadHistory(account, deps) {
   if (cached) return cached;
   const { data } = await fetchEnvelope(`${API_ORIGIN}/v1/players/${account}/match-history`, deps.fetchImpl, deps.signal);
   const points = normalizeHistory(data);
-  writeCache(deps.storage, key, points, deps.now());
+  writeCache(deps.storage, key, points, deps.now(), { prefix: HISTORY_PREFIX, max: MAX_HISTORY_ENTRIES });
   return points;
 }
 
